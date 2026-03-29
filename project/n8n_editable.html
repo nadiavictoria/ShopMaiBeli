@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>N8N 编辑器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f8fafc;
+      overflow: hidden;
+    }
+
+    #app {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    /* 加载状态 */
+    .loading-container {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: linear-gradient(135deg, #f8fafc, #eef2ff);
+      color: #475569;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #e2e8f0;
+      border-top: 4px solid #6366f1;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .loading-text {
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    /* 错误状态 */
+    .error-container {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: linear-gradient(135deg, #f8fafc, #eef2ff);
+      color: #475569;
+      padding: 20px;
+    }
+
+    .error-message {
+      font-size: 16px;
+      color: #dc2626;
+      text-align: center;
+      max-width: 600px;
+    }
+
+    .retry-button {
+      padding: 10px 20px;
+      border-radius: 8px;
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+
+    .retry-button:hover {
+      background: #4f46e5;
+    }
+
+    /* N8N Iframe 容器 */
+    .n8n-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background: #ffffff;
+    }
+
+    .n8n-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+      background: #ffffff;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Vue 3 -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <!-- VueDemi (Pinia 依赖) - 必须在 Pinia 之前加载 -->
+  <script>
+    // 确保 Vue 全局可用，VueDemi 需要它
+    if (typeof Vue !== 'undefined') {
+      window.Vue = Vue;
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/vue-demi@0.14.6/lib/index.iife.js"></script>
+  <!-- Pinia -->
+  <script src="https://cdn.jsdelivr.net/npm/pinia@2.1.7/dist/pinia.iife.js"></script>
+  <!-- Axios -->
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <!-- CryptoJS (用于 AES 加密) -->
+  <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.js"></script>
+  <!-- JSEncrypt (用于 RSA 加密) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsencrypt@3.3.2/bin/jsencrypt.min.js"></script>
+
+  <script>
+    const { createApp, ref, computed, watch, onMounted } = Vue;
+    
+    // 检查 Pinia 是否加载成功
+    if (typeof Pinia === 'undefined') {
+      console.error('Pinia failed to load. Please check browser console for details.');
+      throw new Error('Pinia is not loaded. Make sure VueDemi is loaded before Pinia.');
+    }
+    
+    const { createPinia, defineStore } = Pinia;
+
+    // ==================== 配置项 ====================
+    const CONFIG = {
+      // 登录接口：直接请求后端地址（无需反向代理）
+      // 若后端已配置 CORS，可直接用此方式；否则需用 server-n8n.js 代理
+      API_BASE_URL: 'http://runmesh.ai:8080', // 直接请求后端 API 地址
+      N8N_URL: 'http://runmesh.ai:5678', // N8N 访问地址
+      LOGIN_USERNAME: 'nebula-test', // 写死的用户名
+      LOGIN_PASSWORD: '123456', // 写死的密码
+      CLIENT_ID: 'e5cd7e4891bf95d1d19206ce24a7b32e',
+      TENANT_ID: '000000',
+      GRANT_TYPE: 'password',
+      // RSA 公钥（用于加密登录请求）
+      RSA_PUBLIC_KEY: 'MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKoR8mX0rGKLqzcWmOzbfj64K8ZIgOdHnzkXSOVOZbFu/TJhZ7rFAN+eaGkl3C4buccQd/EjEsj9ir7ijT7h96MCAwEAAQ=='
+    };
+
+    // ==================== 工具函数 ====================
+    // 提取 token（根据实际响应格式：data.access_token）
+    const pickToken = (res) => {
+      // 支持多种响应格式
+      if (res?.data?.access_token) {
+        return res.data.access_token;
+      }
+      if (res?.data?.token) {
+        return res.data.token;
+      }
+      if (res?.access_token) {
+        return res.access_token;
+      }
+      if (res?.token) {
+        return res.token;
+      }
+      return null;
+    };
+
+    // 生成随机 UUID（用于 AES 密钥）
+    const randomUUID = () => {
+      const chars = [...'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'];
+      const uuid = Array.from({ length: 36 });
+      let rnd = 0;
+      let r;
+      for (let i = 0; i < 36; i++) {
+        if (i === 8 || i === 13 || i === 18 || i === 23) {
+          uuid[i] = '-';
+        } else if (i === 14) {
+          uuid[i] = '4';
+        } else {
+          if (rnd <= 0x02) rnd = Math.trunc(0x2_00_00_00 + Math.random() * 0x1_00_00_00);
+          r = rnd & 16;
+          rnd = rnd >> 4;
+          uuid[i] = chars[i === 19 ? (r & 0x3) | 0x8 : r];
+        }
+      }
+      return uuid.join('').replace(/-/g, '').toLowerCase();
+    };
+
+    // AES 加密（参考 nus-flow/utils/crypto.ts）
+    const encryptWithAes = (message, aesKey) => {
+      const encrypted = CryptoJS.AES.encrypt(message, aesKey, {
+        mode: CryptoJS.mode.ECB,
+        padding: CryptoJS.pad.Pkcs7,
+      });
+      return encrypted.toString();
+    };
+
+    // Base64 编码
+    const encryptBase64 = (wordArray) => {
+      return CryptoJS.enc.Base64.stringify(wordArray);
+    };
+
+    // RSA 加密（参考 nus-flow/utils/jsencrypt.ts）
+    const rsaEncrypt = (txt) => {
+      if (!CONFIG.RSA_PUBLIC_KEY) {
+        console.warn('RSA公钥未配置');
+        return false;
+      }
+      const instance = new JSEncrypt();
+      instance.setPublicKey(CONFIG.RSA_PUBLIC_KEY);
+      return instance.encrypt(txt);
+    };
+
+    // 加密请求体（参考 nus-flow/utils/axios.ts）
+    const encryptRequestBody = (body) => {
+      try {
+        const aesKey = CryptoJS.enc.Utf8.parse(randomUUID());
+        const encryptedData = encryptWithAes(JSON.stringify(body), aesKey);
+        const base64AesKey = encryptBase64(aesKey);
+        const rsaEncryptedKey = rsaEncrypt(base64AesKey);
+        
+        if (rsaEncryptedKey) {
+          return {
+            data: encryptedData,
+            encryptKey: rsaEncryptedKey
+          };
+        } else {
+          console.warn('RSA加密失败，使用明文');
+          return { data: body, encryptKey: null };
+        }
+      } catch (e) {
+        console.warn('加密失败，使用明文', e);
+        return { data: body, encryptKey: null };
+      }
+    };
+
+    // 映射用户信息（参考 nus-flow/stores/useAuthStore.ts 的 mapToUser）
+    const mapToUser = (u, rolesFromResponse) => {
+      if (!u || typeof u !== 'object') {
+        console.warn('无效的用户数据:', u);
+        return null;
+      }
+
+      // 调试：打印原始用户数据
+      console.log('mapToUser 输入数据:', u, 'rolesFromResponse:', rolesFromResponse);
+
+      let rawRole = u.role;
+
+      if (!rawRole) {
+        const rolesToCheck = rolesFromResponse || u.roles;
+        if (rolesToCheck) {
+          if (Array.isArray(rolesToCheck) && rolesToCheck.length > 0) {
+            const hasAdminRole = rolesToCheck.some((r) => {
+              const roleStr = String(r).toLowerCase();
+              return roleStr === 'admin' || roleStr === 'super' || roleStr.includes('admin');
+            });
+            rawRole = hasAdminRole ? 'admin' : rolesToCheck[0];
+          } else if (typeof rolesToCheck === 'string') {
+            rawRole = rolesToCheck;
+          }
+        }
+      }
+
+      if (!rawRole) {
+        if (u.userType) {
+          rawRole = u.userType;
+        } else if (u.roleId) {
+          rawRole = u.roleId;
+        } else if (u.roleKey) {
+          if (Array.isArray(u.roleKey) && u.roleKey.length > 0) {
+            rawRole = u.roleKey[0];
+          } else if (typeof u.roleKey === 'string') {
+            rawRole = u.roleKey;
+          }
+        }
+      }
+
+      const roleStr = String(rawRole || '').toLowerCase();
+      const role = roleStr === 'admin' || roleStr === 'super' || roleStr.includes('admin') || roleStr === 'sys_admin' ? 'ADMIN' : 'USER';
+
+      // 尝试多种可能的ID字段（扩展支持更多字段）
+      const userId = String(
+        u.userId ?? 
+        u.id ?? 
+        u.user_id ?? 
+        u.userIdStr ?? 
+        u.userName ??  // 如果没有ID，使用用户名作为ID
+        ''
+      );
+      
+      if (!userId || userId === '') {
+        console.warn('用户ID为空，原始数据:', u);
+        // 如果确实没有ID，使用用户名作为ID（临时方案）
+        const userName = u.userName ?? u.username ?? u.nickName ?? u.name;
+        if (userName) {
+          console.warn('使用用户名作为ID:', userName);
+          return {
+            id: String(userName),
+            name: userName,
+            email: u.email ?? '',
+            role: role,
+            amount: Number(u.amount) || 0
+          };
+        }
+        return null;
+      }
+
+      return {
+        id: userId,
+        name: u.userName ?? u.username ?? u.nickName ?? u.name ?? '未知用户',
+        email: u.email ?? '',
+        role: role,
+        amount: Number(u.amount) || 0
+      };
+    };
+
+    // 手动实现 Pinia 持久化（因为单文件无法使用 pinia-plugin-persistedstate）
+    const createPersistedStore = (storeDefinition) => {
+      const store = storeDefinition();
+      
+      // 在每次状态变更时自动持久化
+      const originalActions = {};
+      Object.keys(store.actions || {}).forEach(key => {
+        originalActions[key] = store.actions[key];
+        store.actions[key] = function(...args) {
+          const result = originalActions[key].apply(this, args);
+          // 如果是 Promise，等待完成后持久化
+          if (result && typeof result.then === 'function') {
+            return result.then((res) => {
+              this.persist();
+              return res;
+            }).catch((err) => {
+              this.persist();
+              throw err;
+            });
+          } else {
+            this.persist();
+            return result;
+          }
+        };
+      });
+
+      return store;
+    };
+
+    const useAuthStore = defineStore('auth', {
+      state: () => ({
+        token: null,
+        user: null,
+        isAuthenticated: false,
+        hasHydrated: false,
+        loading: false,
+        error: null
+      }),
+
+      getters: {
+        bearerToken: (state) => state.token ? `Bearer ${state.token}` : null
+      },
+
+      actions: {
+        // 初始化：从 localStorage 恢复状态（参考 nus-flow）
+        init() {
+          try {
+            // 先尝试从 n8n-auth-store 恢复
+            const stored = localStorage.getItem('n8n-auth-store');
+            if (stored) {
+              const data = JSON.parse(stored);
+              this.token = data.token || null;
+              this.user = data.user || null;
+              this.isAuthenticated = !!this.token && !!this.user;
+            }
+            
+            // 如果没有，尝试从 auth-token（nus-flow 的存储 key）恢复
+            if (!this.token) {
+              const tokenFromStorage = localStorage.getItem('auth-token');
+              if (tokenFromStorage) {
+                this.token = tokenFromStorage;
+                // 如果有 token 但没有 user，需要获取用户信息
+                this.isAuthenticated = !!this.token;
+              }
+            }
+          } catch (e) {
+            console.error('Failed to restore auth state:', e);
+          } finally {
+            this.hasHydrated = true;
+          }
+        },
+
+        // 保存状态到 localStorage（参考 nus-flow）
+        persist() {
+          try {
+            const data = {
+              token: this.token,
+              user: this.user,
+              isAuthenticated: this.isAuthenticated
+            };
+            localStorage.setItem('n8n-auth-store', JSON.stringify(data));
+            // 同时保存到 auth-token（兼容 nus-flow）
+            if (this.token) {
+              localStorage.setItem('auth-token', this.token);
+            }
+          } catch (e) {
+            console.error('Failed to persist auth state:', e);
+          }
+        },
+
+        // 获取当前用户信息（参考 nus-flow/server/auth.ts 的 fetchCurrentUser）
+        async fetchUser() {
+          const token = this.token || localStorage.getItem('auth-token');
+          if (!token) return null;
+
+          try {
+            const response = await axios.get(
+              `${CONFIG.API_BASE_URL}/system/user/getInfo`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                  'Clientid': CONFIG.CLIENT_ID
+                }
+              }
+            );
+
+            console.log('fetchUser 响应:', response.data);
+
+            // 处理响应数据（参考 nus-flow/stores/useAuthStore.ts）
+            // 响应可能是 { code: 200, data: { user: {...}, roles: [...] } } 或直接是 { user: {...} }
+            let userData = null;
+            let rolesFromResponse = null;
+
+            if (response.data?.data) {
+              // 格式：{ code: 200, data: { user: {...}, roles: [...] } }
+              userData = response.data.data.user || response.data.data;
+              rolesFromResponse = response.data.data.roles || response.data.roles;
+            } else if (response.data?.user) {
+              // 格式：{ user: {...}, roles: [...] }
+              userData = response.data.user;
+              rolesFromResponse = response.data.roles;
+            } else {
+              // 格式：直接是用户对象
+              userData = response.data;
+            }
+
+            console.log('提取的用户数据:', userData, '角色:', rolesFromResponse);
+
+            const mapped = mapToUser(userData, rolesFromResponse);
+
+            if (mapped) {
+              this.user = mapped;
+              this.isAuthenticated = true;
+              this.persist(); // 立即持久化
+              console.log('用户信息已保存:', mapped);
+              return mapped;
+            }
+
+            console.warn('mapToUser 返回 null，无法映射用户信息');
+            return null;
+          } catch (error) {
+            console.error('Failed to fetch user:', error);
+            // 如果获取用户信息失败，不清除 token，只返回 null
+            return null;
+          }
+        },
+
+        // 登录（参考 nus-flow/stores/useAuthStore.ts）
+        async login() {
+          this.loading = true;
+          this.error = null;
+
+          try {
+            // 准备请求体
+            const requestBody = {
+              clientId: CONFIG.CLIENT_ID,
+              tenantId: CONFIG.TENANT_ID,
+              grantType: CONFIG.GRANT_TYPE,
+              username: CONFIG.LOGIN_USERNAME,
+              password: CONFIG.LOGIN_PASSWORD
+            };
+
+            // 加密请求体（参考 nus-flow/utils/axios.ts）
+            const encrypted = encryptRequestBody(requestBody);
+            
+            // 设置请求头
+            const headers = {
+              'Content-Type': 'application/json;charset=utf-8'
+            };
+            
+            // 如果有加密密钥，添加到请求头
+            if (encrypted.encryptKey) {
+              headers['encrypt-key'] = encrypted.encryptKey;
+            }
+
+            const response = await axios.post(
+              `${CONFIG.API_BASE_URL}/auth/login`,
+              encrypted.data,
+              { headers }
+            );
+
+            // 提取 token（根据实际响应格式）
+            const res = response.data;
+            console.log('登录响应:', res); // 调试日志
+            
+            // 实际响应格式：{ code: 200, data: { access_token: "..." } }
+            const token = pickToken(res);
+            console.log('提取的 token:', token ? token.substring(0, 20) + '...' : 'null'); // 调试日志
+            
+            if (!token) {
+              console.error('Token 提取失败，响应数据:', res);
+              throw new Error('登录失败：未获取到 token');
+            }
+
+            // 保存 token
+            localStorage.setItem('auth-token', token);
+            this.token = token;
+            this.persist(); // 立即持久化 token
+
+            // 优先尝试从登录返回结果中获取用户信息
+            let user = null;
+            if (res.user || res.data?.user) {
+              const userData = res.user || res.data?.user;
+              const rolesFromResponse = res.roles || res.data?.roles;
+              user = mapToUser(userData, rolesFromResponse);
+              if (user) {
+                this.user = user;
+                this.isAuthenticated = true;
+                this.persist(); // 立即持久化
+                return { token, user };
+              }
+            }
+
+            // 如果登录结果没有用户信息，则主动获取（参考 nus-flow）
+            user = await this.fetchUser();
+            if (user) {
+              return { token, user };
+            }
+
+            // 如果获取失败但没有报错（如空数据），仅设置 token
+            this.isAuthenticated = true;
+            this.persist(); // 即使没有 user 也持久化 token
+            return { token, user: null };
+          } catch (error) {
+            const message = error.response?.data?.message || 
+                           error.response?.data?.msg || 
+                           error.message || 
+                           '登录失败，请检查网络连接';
+            this.error = message;
+            this.token = null;
+            this.user = null;
+            this.isAuthenticated = false;
+            localStorage.removeItem('auth-token');
+            throw error;
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        // 登出（参考 nus-flow）
+        logout() {
+          this.token = null;
+          this.user = null;
+          this.isAuthenticated = false;
+          localStorage.removeItem('n8n-auth-store');
+          localStorage.removeItem('auth-token');
+        }
+      }
+    });
+
+    // ==================== Vue 组件 ====================
+    const App = {
+      setup() {
+        const authStore = useAuthStore();
+        const iframeRef = ref(null);
+        const iframeStatus = ref('loading'); // loading | ready | error
+        const n8nReady = ref(false);
+        const lastSentToken = ref(null);
+        const lastSentAuthInfo = ref(null);
+        
+        // 调试：监听 iframeStatus 变化
+        watch(() => iframeStatus.value, (newStatus) => {
+          console.log('iframeStatus 变化:', newStatus);
+        });
+
+        // 获取 N8N URL 的 origin
+        const n8nOrigin = computed(() => {
+          try {
+            return new URL(CONFIG.N8N_URL).origin;
+          } catch {
+            return '';
+          }
+        });
+
+        // 获取 N8N iframe URL（参考 nus-flow/components/N8nEditor/index.tsx）
+        const n8nIframeUrl = computed(() => {
+          try {
+            const url = new URL(`${CONFIG.N8N_URL}/workflow/new`);
+            
+            // 从当前页面 URL 中获取查询参数（参考 UserDashboard 的逻辑）
+            const searchParams = new URLSearchParams(window.location.search);
+            const createParam = searchParams.get('create');
+            const definitionParam = searchParams.get('definitionJson');
+            const waitDefinitionParam = searchParams.get('waitDefinition');
+            const usePostMessageParam = searchParams.get('usePostMessage');
+            
+            // 如果 URL 中有 create 参数，传递给 N8N
+            if (createParam) {
+              url.searchParams.set('create', createParam);
+            } else {
+              // 默认设置为 true（创建新工作流）
+              url.searchParams.set('create', 'true');
+            }
+            
+            // 其他可选参数
+            if (definitionParam) {
+              url.searchParams.set('definitionJson', definitionParam);
+            }
+            if (waitDefinitionParam) {
+              url.searchParams.set('waitDefinition', waitDefinitionParam);
+            }
+            if (usePostMessageParam) {
+              url.searchParams.set('usePostMessage', usePostMessageParam);
+            }
+            
+            // 添加语言参数
+            url.searchParams.set('lang', 'zh');
+            
+            const finalUrl = url.toString();
+            console.log('N8N iframe URL:', finalUrl);
+            return finalUrl;
+          } catch (e) {
+            console.error('构建 N8N URL 失败:', e);
+            const fallbackUrl = `${CONFIG.N8N_URL}/workflow/new?create=true&lang=zh`;
+            console.log('使用备用 URL:', fallbackUrl);
+            return fallbackUrl;
+          }
+        });
+
+        // 发送 token 到 N8N
+        const sendToken = () => {
+          if (!iframeRef.value?.contentWindow || !authStore.token || !n8nOrigin.value) return;
+          
+          const bearerToken = authStore.bearerToken;
+          if (lastSentToken.value === bearerToken) return;
+
+          iframeRef.value.contentWindow.postMessage(bearerToken, n8nOrigin.value);
+          lastSentToken.value = bearerToken;
+        };
+
+        // 发送用户信息到 N8N
+        const sendAuthInfo = () => {
+          if (!iframeRef.value?.contentWindow || !authStore.user?.id || !n8nOrigin.value) return;
+
+          const authInfo = {
+            type: 'AUTH_INFO',
+            userId: authStore.user.id,
+            userName: authStore.user.name || '',
+            userEmail: authStore.user.email || '',
+            userRole: authStore.user.role || '',
+            source: 'N8N-STANDALONE'
+          };
+
+          const fingerprint = JSON.stringify(authInfo);
+          if (lastSentAuthInfo.value === fingerprint) return;
+
+          iframeRef.value.contentWindow.postMessage(authInfo, n8nOrigin.value);
+          lastSentAuthInfo.value = fingerprint;
+        };
+
+        // 处理 iframe 加载完成
+        const handleIframeLoad = (event) => {
+          console.log('iframe load 事件触发', event);
+          // 延迟一点时间，确保 iframe 内容完全加载
+          setTimeout(() => {
+            if (iframeRef.value && iframeRef.value.contentWindow) {
+              console.log('iframe 内容窗口可用，设置为 ready');
+              iframeStatus.value = 'ready';
+            } else {
+              console.warn('iframe 内容窗口不可用，但设置为 ready');
+              iframeStatus.value = 'ready';
+            }
+          }, 500);
+        };
+
+        // 处理 iframe 加载错误
+        const handleIframeError = (event) => {
+          console.error('iframe 加载错误', event);
+          iframeStatus.value = 'error';
+        };
+
+        // 添加超时处理和 iframe 检查
+        let loadTimeout = null;
+        let checkInterval = null;
+        
+        Vue.onMounted(() => {
+          // 监听 iframeStatus 变化，设置超时
+          watch(() => iframeStatus.value, (newStatus) => {
+            console.log('iframeStatus 变化:', newStatus);
+            
+            if (newStatus === 'loading') {
+              // 清除旧的超时和检查
+              if (loadTimeout) {
+                clearTimeout(loadTimeout);
+              }
+              if (checkInterval) {
+                clearInterval(checkInterval);
+              }
+              
+              // 设置新的超时：15 秒后强制设置为 ready
+              loadTimeout = setTimeout(() => {
+                if (iframeStatus.value === 'loading') {
+                  console.warn('iframe 加载超时（15秒），强制设置为 ready');
+                  iframeStatus.value = 'ready';
+                }
+              }, 15000);
+              
+              // 定期检查 iframe 是否已加载（每2秒检查一次）
+              checkInterval = setInterval(() => {
+                if (iframeRef.value && iframeRef.value.contentWindow) {
+                  try {
+                    // 尝试访问 iframe 内容（可能会因为跨域失败，但没关系）
+                    const iframeDoc = iframeRef.value.contentDocument || iframeRef.value.contentWindow.document;
+                    if (iframeDoc && iframeDoc.readyState === 'complete') {
+                      console.log('检测到 iframe 已加载完成');
+                      if (iframeStatus.value === 'loading') {
+                        iframeStatus.value = 'ready';
+                      }
+                      clearInterval(checkInterval);
+                      checkInterval = null;
+                    }
+                  } catch (e) {
+                    // 跨域访问失败是正常的，忽略错误
+                  }
+                }
+              }, 2000);
+            } else {
+              // 如果状态不是 loading，清除超时和检查
+              if (loadTimeout) {
+                clearTimeout(loadTimeout);
+                loadTimeout = null;
+              }
+              if (checkInterval) {
+                clearInterval(checkInterval);
+                checkInterval = null;
+              }
+            }
+          }, { immediate: true });
+        });
+
+        // 监听 postMessage
+        onMounted(() => {
+          const handleMessage = (event) => {
+            if (!n8nOrigin.value) return;
+
+            // 验证来源
+            const isTrustedOrigin = event.origin === n8nOrigin.value;
+            if (!isTrustedOrigin) return;
+
+            const data = event.data;
+
+            // 处理 N8N ready 事件
+            if (data && typeof data === 'object' && data.type === 'N8N_EVENT' && data.event === 'ready') {
+              n8nReady.value = true;
+              sendToken();
+              sendAuthInfo();
+              return;
+            }
+
+            // 处理 TOKEN_REQUEST
+            if (data && typeof data === 'object' && data.type === 'TOKEN_REQUEST') {
+              if (authStore.token && event.source && n8nOrigin.value) {
+                const bearerToken = authStore.bearerToken;
+                event.source.postMessage(bearerToken, n8nOrigin.value);
+              }
+              return;
+            }
+          };
+
+          window.addEventListener('message', handleMessage);
+
+          // 初始化：恢复状态或登录
+          (async () => {
+            // 先初始化，恢复 localStorage 中的状态
+            authStore.init();
+
+            // 等待 hasHydrated 完成
+            await new Promise(resolve => {
+              const checkHydrated = () => {
+                if (authStore.hasHydrated) {
+                  resolve();
+                } else {
+                  setTimeout(checkHydrated, 10);
+                }
+              };
+              checkHydrated();
+            });
+
+            // 从 localStorage 直接检查，确保获取最新数据
+            let storedToken = null;
+            let storedUser = null;
+            
+            try {
+              const stored = localStorage.getItem('n8n-auth-store');
+              if (stored) {
+                const data = JSON.parse(stored);
+                storedToken = data.token || null;
+                storedUser = data.user || null;
+              }
+              // 如果没有，尝试从 auth-token 获取
+              if (!storedToken) {
+                storedToken = localStorage.getItem('auth-token');
+              }
+            } catch (e) {
+              console.error('Failed to read localStorage:', e);
+            }
+
+            // 同步到 store（确保 store 状态正确）
+            if (storedToken && !authStore.token) {
+              authStore.token = storedToken;
+            }
+            if (storedUser && !authStore.user) {
+              authStore.user = storedUser;
+              authStore.isAuthenticated = true;
+            }
+
+            // 判断是否有有效的 token 和 user
+            const hasToken = storedToken || authStore.token;
+            const hasUser = (storedUser && storedUser.id) || (authStore.user && authStore.user.id);
+
+            console.log('初始化检查:', {
+              hasToken: !!hasToken,
+              hasUser: !!hasUser,
+              token: hasToken ? hasToken.substring(0, 20) + '...' : null,
+              user: hasUser ? (storedUser || authStore.user) : null
+            });
+
+            // 如果有 token 但没有 user，尝试获取用户信息
+            if (hasToken && !hasUser) {
+              console.log('有 token 但没有 user，尝试获取用户信息');
+              try {
+                const user = await authStore.fetchUser();
+                if (user && user.id) {
+                  console.log('成功获取用户信息，跳过登录');
+                  return;
+                }
+              } catch (error) {
+                console.error('Failed to fetch user:', error);
+                // 如果获取用户信息失败，清除 token，重新登录
+                authStore.logout();
+                storedToken = null;
+                storedUser = null;
+              }
+            }
+
+            // 如果已有 token 和 user，直接加载 iframe，不调用登录接口
+            if (hasToken && hasUser) {
+              console.log('使用已有的 token 和 user，跳过登录');
+              // 确保 store 状态正确
+              if (!authStore.isAuthenticated) {
+                authStore.isAuthenticated = true;
+              }
+              return;
+            }
+
+            // 如果没有 token 或 user，才执行登录
+            if (!hasToken || !hasUser) {
+              console.log('没有 token 或 user，执行登录');
+              try {
+                await authStore.login();
+              } catch (error) {
+                console.error('Login failed:', error);
+              }
+            }
+          })();
+
+          return () => {
+            window.removeEventListener('message', handleMessage);
+          };
+        });
+
+        // iframe ready 后发送 token
+        watch([() => iframeStatus.value, () => authStore.token], () => {
+          if (iframeStatus.value === 'ready' && authStore.token) {
+            sendToken();
+          }
+        });
+
+        // N8N ready 后发送用户信息
+        watch([() => n8nReady.value, () => authStore.user], () => {
+          if (n8nReady.value && authStore.user) {
+            sendAuthInfo();
+          }
+        });
+
+        // 重试登录
+        const retryLogin = async () => {
+          try {
+            await authStore.login();
+          } catch (error) {
+            console.error('Retry login failed:', error);
+          }
+        };
+
+        return {
+          authStore,
+          iframeRef,
+          iframeStatus,
+          n8nIframeUrl,
+          handleIframeLoad,
+          handleIframeError,
+          retryLogin
+        };
+      },
+
+      template: `
+        <div id="app">
+          <!-- 加载中（登录或初始化） -->
+          <div v-if="authStore.loading || !authStore.hasHydrated" class="loading-container">
+            <div class="spinner"></div>
+            <div class="loading-text">{{ authStore.loading ? '正在登录...' : '正在初始化...' }}</div>
+          </div>
+
+          <!-- 登录错误 -->
+          <div v-else-if="authStore.error && !authStore.isAuthenticated" class="error-container">
+            <div class="error-message">{{ authStore.error }}</div>
+            <button class="retry-button" @click="retryLogin">重试登录</button>
+          </div>
+
+          <!-- N8N 编辑器 -->
+          <div v-else-if="authStore.isAuthenticated && authStore.token && authStore.user" class="n8n-container">
+            <!-- iframe 加载中 -->
+            <div v-if="iframeStatus === 'loading'" class="loading-container">
+              <div class="spinner"></div>
+              <div class="loading-text">正在加载 N8N 编辑器...</div>
+              <div style="margin-top: 10px; font-size: 12px; color: #64748b;">
+                如果长时间未加载，请检查控制台日志
+              </div>
+            </div>
+
+            <!-- iframe 加载错误 -->
+            <div v-else-if="iframeStatus === 'error'" class="error-container">
+              <div class="error-message">N8N 编辑器加载失败</div>
+              <button class="retry-button" @click="() => window.location.reload()">重新加载</button>
+            </div>
+
+            <!-- iframe -->
+            <iframe
+              v-show="iframeStatus === 'ready'"
+              ref="iframeRef"
+              :src="n8nIframeUrl"
+              class="n8n-iframe"
+              title="N8N Workflow Editor"
+              @load="handleIframeLoad"
+              @error="handleIframeError"
+              allow="clipboard-read; clipboard-write"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-top-navigation"
+            ></iframe>
+          </div>
+        </div>
+      `
+    };
+
+    // ==================== 初始化应用 ====================
+    const pinia = createPinia();
+    
+    // 添加持久化中间件：在每次 mutation 后自动保存到 localStorage
+    pinia.use(({ store }) => {
+      // 监听所有状态变化
+      store.$subscribe((mutation, state) => {
+        // 延迟保存，避免频繁写入
+        if (store.persist && typeof store.persist === 'function') {
+          setTimeout(() => {
+            store.persist();
+          }, 0);
+        }
+      });
+    });
+    
+    const app = createApp(App);
+    app.use(pinia);
+    app.mount('#app');
+  </script>
+</body>
+</html>

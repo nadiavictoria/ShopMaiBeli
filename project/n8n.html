@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>n8n-demo preview</title>
+
+  <!-- n8n-demo dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/@webcomponents/webcomponentsjs@2.0.0/webcomponents-loader.js"></script>
+  <script src="https://www.unpkg.com/lit@2.0.0-rc.2/polyfill-support.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@n8n_io/n8n-demo-component/n8n-demo.bundled.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .wrap { height: 100%; padding: 12px; box-sizing: border-box; }
+    .panel { height: 100%; border: 1px solid #eee; border-radius: 10px; padding: 10px; box-sizing: border-box; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <n8n-demo workflow='{"nodes":[{"name":"Workflow-Created","type":"n8n-nodes-base.webhook","position":[512,369],"parameters":{"path":"webhook","httpMethod":"POST"},"typeVersion":1}],"connections":{}}'></n8n-demo>
+    </div>
+  </div>
+</body>
+</html>

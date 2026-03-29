@@ -1,0 +1,249 @@
+{
+  "name": "NUS News ChatBot",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ee096dd3-8bb2-4a2e-b4a2-7607c4baa596",
+      "name": "When chat message received",
+      "webhookId": "31230072-4d0c-4499-b69e-87b033eddd16"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        352,
+        224
+      ],
+      "id": "1d903613-50ac-4aa5-b488-1f2dd061c7e5",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "description": "Tool name: filter_nus_rss_by_time (optional)\n\nDescription (English):\nFilters an RSS/Atom feed by a time window and returns a compact list of items.\n\nInput (JSON string in _query):\n\nurl (string, required): RSS/Atom feed URL\n\ndays (integer, optional, default 30): Include items published in the last N days\n\nstart (string, optional): ISO-8601 datetime (UTC) for the start of the window\n\nend (string, optional): ISO-8601 datetime (UTC) for the end of the window (defaults to “now”)\n\nmax_items (integer, optional, default 10): Maximum number of items to return\n\nFiltering rule:\n\nIf start is provided, the tool filters items in [start, end].\n\nOtherwise, it filters items published within the last days days.",
+        "language": "python",
+        "pythonCode": "import json\nimport re\nimport html\nfrom datetime import datetime, timezone, timedelta\nfrom urllib.request import Request, urlopen\nfrom email.utils import parsedate_to_datetime\nimport xml.etree.ElementTree as ET\n\n# ---- helpers ----\ndef _now_utc():\n    return datetime.now(timezone.utc)\n\ndef _parse_dt(val):\n    \"\"\"Parse RFC2822 pubDate / ISO8601 / unix timestamp -> aware UTC datetime.\"\"\"\n    if not val:\n        return None\n\n    if isinstance(val, (int, float)):\n        ts = float(val)\n        if ts > 1e12:  # ms\n            ts /= 1000.0\n        return datetime.fromtimestamp(ts, tz=timezone.utc)\n\n    s = str(val).strip()\n    if not s:\n        return None\n\n    # RFC822/2822 (pubDate)\n    try:\n        dt = parsedate_to_datetime(s)\n        if dt:\n            if dt.tzinfo is None:\n                dt = dt.replace(tzinfo=timezone.utc)\n            return dt.astimezone(timezone.utc)\n    except Exception:\n        pass\n\n    # ISO8601\n    try:\n        dt = datetime.fromisoformat(s.replace(\"Z\", \"+00:00\"))\n        if dt.tzinfo is None:\n            dt = dt.replace(tzinfo=timezone.utc)\n        return dt.astimezone(timezone.utc)\n    except Exception:\n        return None\n\ndef _strip_ns(tag: str) -> str:\n    return tag.split(\"}\", 1)[-1] if \"}\" in tag else tag\n\ndef _get_child_text(el, names):\n    \"\"\"Find first child whose localname in names; return stripped text.\"\"\"\n    for ch in list(el):\n        if _strip_ns(ch.tag) in names:\n            txt = (ch.text or \"\").strip()\n            if txt:\n                return txt\n    return \"\"\n\ndef _get_atom_link(entry):\n    for ch in list(entry):\n        if _strip_ns(ch.tag) == \"link\":\n            href = ch.attrib.get(\"href\")\n            if not href:\n                continue\n            rel = (ch.attrib.get(\"rel\") or \"\").lower()\n            if rel in (\"\", \"alternate\"):\n                return href.strip()\n    return \"\"\n\ndef _to_content_snippet(raw_html: str):\n    \"\"\"Convert description/content HTML -> plain text snippet (no length truncation).\"\"\"\n    if not raw_html:\n        return \"\"\n    s = html.unescape(raw_html)\n    s = re.sub(r\"<[^>]+>\", \" \", s)   # strip tags\n    s = re.sub(r\"\\s+\", \" \", s).strip()\n    return s\n\ndef fetch_xml(url: str) -> str:\n    req = Request(url, headers={\"User-Agent\": \"n8n-rss-agent/1.0\"})\n    with urlopen(req, timeout=20) as r:\n        return r.read().decode(\"utf-8\", errors=\"replace\")\n\ndef parse_feed(xml_text: str):\n    \"\"\"Return list of dicts with title/link/pubDate_raw/dt/content_raw.\"\"\"\n    root = ET.fromstring(xml_text)\n    root_name = _strip_ns(root.tag).lower()\n\n    items = []\n\n    # RSS 2.0\n    if root_name == \"rss\":\n        channel = None\n        for ch in list(root):\n            if _strip_ns(ch.tag).lower() == \"channel\":\n                channel = ch\n                break\n        if channel is None:\n            return items\n\n        for it in channel.findall(\".//item\"):\n            title = _get_child_text(it, [\"title\"])\n            link = _get_child_text(it, [\"link\"])\n            pub_raw = _get_child_text(it, [\"pubDate\", \"date\", \"updated\"])\n            # description / content:encoded (localname usually \"encoded\")\n            desc = _get_child_text(it, [\"description\", \"summary\"])\n            encoded = _get_child_text(it, [\"encoded\", \"content\"])  # cover content:encoded / content\n            content_raw = encoded or desc\n\n            dt = _parse_dt(pub_raw)\n            items.append({\n                \"title\": title,\n                \"link\": link,\n                \"pubDate\": pub_raw,\n                \"dt\": dt,\n                \"content_raw\": content_raw,\n            })\n        return items\n\n    # Atom\n    if root_name == \"feed\":\n        for entry in root.findall(\".//{*}entry\"):\n            title = _get_child_text(entry, [\"title\"])\n            link = _get_atom_link(entry)\n            pub_raw = _get_child_text(entry, [\"published\", \"updated\"])\n            summ = _get_child_text(entry, [\"summary\", \"content\"])\n\n            dt = _parse_dt(pub_raw)\n            items.append({\n                \"title\": title,\n                \"link\": link,\n                \"pubDate\": pub_raw,\n                \"dt\": dt,\n                \"content_raw\": summ,\n            })\n        return items\n\n    return items\n\n# ---- main ----\nquery = _query  # n8n Code Tool input\n\nif not query or not str(query).strip():\n    return json.dumps(\n        {\"error\": \"Provide JSON: {url, days?, start?, end?, max_items?}\"},\n        ensure_ascii=False\n    )\n\ncfg = json.loads(query)\nurl = cfg.get(\"url\")\nif not url:\n    return json.dumps({\"error\": \"Missing 'url'.\"}, ensure_ascii=False)\n\nmax_items = int(cfg.get(\"max_items\", 20))\n\nnow = _parse_dt(cfg.get(\"now\")) or _now_utc()\nend = _parse_dt(cfg.get(\"end\")) or now\nstart = _parse_dt(cfg.get(\"start\"))\n\n# if no explicit start provided, fall back to days\nif start is None:\n    days = int(cfg.get(\"days\", 30))\n    start = end - timedelta(days=days)\n\nxml_text = fetch_xml(url)\nraw_items = parse_feed(xml_text)\n\nout = []\nfor it in raw_items:\n    dt = it.get(\"dt\")\n    if not dt:\n        continue\n    if start <= dt <= end:\n        out.append({\n            \"title\": it.get(\"title\", \"\"),\n            \"link\": it.get(\"link\", \"\"),\n            \"pubDate\": it.get(\"pubDate\", \"\"),\n            \"contentSnippet\": _to_content_snippet(it.get(\"content_raw\", \"\")),\n        })\n\n# sort by dt desc (we don't output dt, only use for sorting)\ndef _sort_key(x):\n    # parse pubDate again for ordering fallback if needed\n    return _parse_dt(x.get(\"pubDate\")) or datetime.min.replace(tzinfo=timezone.utc)\n\nout.sort(key=_sort_key, reverse=True)\nout = out[:max_items]\n\nreturn json.dumps(\n    {\n        \"start\": start.isoformat(),\n        \"end\": end.isoformat(),\n        \"count\": len(out),\n        \"items\": out,\n    },\n    ensure_ascii=False\n)\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        224
+      ],
+      "id": "ea24b6bf-ef5a-45ce-a633-3af4c2e6764e",
+      "name": "Code Tool"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"html\": \"<html><body><h1>Report</h1></body></html>\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        824,
+        224
+      ],
+      "id": "866f5b06-c153-4cad-90f0-2bc678d686aa",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "output.html",
+        "options": {
+          "fileName": "NUS_News_Report.html"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "5bdc04ed-c7b4-4a73-b0a0-a24c3bc279fd",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are an AI agent that helps users analyze NUS news based on their queries. Use the NUS News RSS Tool to fetch news articles within the specified date range and provide a detailed analysis.\nNUS news RSS Link: https://news.nus.edu.sg/tagfeed/en-sg/tags/highlights."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        280,
+        0
+      ],
+      "id": "b0cce970-f5a3-47ac-9b69-13bb5f131bb8",
+      "name": "Analyze Agent"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.output }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an HTML report generator.\n\nYou will be given content from the previous step (news items and/or summaries).\nReturn ONLY a JSON object that matches the required schema.\n\nRules:\n- Output must be valid JSON.\n- JSON must contain exactly one key: \"html\".\n- The \"html\" value must be a single string containing valid HTML.\n- Do NOT include Markdown fences.\n- Do NOT include any extra keys or commentary.\n- The HTML should be readable: include a title, timestamp, and a list/table of items."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        688,
+        0
+      ],
+      "id": "778e9d5b-17c4-47e9-b1f2-71df2fb1323c",
+      "name": "Report Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        696,
+        224
+      ],
+      "id": "1ae19204-302d-4af8-abd2-3c86cfb9b762",
+      "name": "Report Model",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "WoMBXsB3O498L9h5",
+          "name": "DeepSeek account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        224,
+        224
+      ],
+      "id": "b97c3a00-2f04-40ca-b9ff-84c8a53c5620",
+      "name": "Analyze Model",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "WoMBXsB3O498L9h5",
+          "name": "DeepSeek account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Analyze Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Analyze Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Analyze Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Report Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Agent": {
+      "main": [
+        [
+          {
+            "node": "Report Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Agent": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Report Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Analyze Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "b7344195-6c7e-4127-81da-a86092e4e67e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "33c884fbb805b205ac1c241a7b5c87d735827667f1c4c32fbd8571efede7eb64"
+  },
+  "id": "BcruAkjQCaiN7o9mhf7lR",
+  "tags": []
+}
