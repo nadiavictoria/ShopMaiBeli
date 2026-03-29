@@ -1,0 +1,35 @@
+{
+  "id": "example-shopping-01",
+  "name": "Simple Shopping Search",
+  "nodes": [
+    {
+      "id": "node-trigger-01",
+      "name": "Trigger",
+      "type": "chatTrigger",
+      "typeVersion": 1.4,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "node-search-01",
+      "name": "Product Search",
+      "type": "productSearch",
+      "typeVersion": 1.0,
+      "position": [240, 0],
+      "parameters": {
+        "source": "mock",
+        "maxResults": 5
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          { "node": "Product Search", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

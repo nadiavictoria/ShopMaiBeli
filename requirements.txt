@@ -1,0 +1,17 @@
+# Core dependencies
+httpx
+openai
+requests
+anthropic
+
+# Frontend
+chainlit==2.9.6
+
+# Backend
+fastapi[standard]
+uvicorn
+python-dotenv
+
+# Testing
+pytest
+pytest-asyncio
