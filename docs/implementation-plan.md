@@ -1,5 +1,107 @@
 # Implementation Plan: Execution Engine
 
+## Completion Status
+
+| Step | Description | Status | Completed |
+|---|---|---|---|
+| STEP 0 | Migrate starter kit to new structure | ✅ Done | 2026-03-29 |
+| STEP 1 | Parallel execution engine (asyncio.gather + levels) | ✅ Done | 2026-03-29 |
+| STEP 2 | ProductSearchExecutor (mock / fakestoreapi / dummyjson) | ✅ Done | 2026-03-29 |
+| STEP 3 | ReviewAnalyzerExecutor (simple mode + RAG placeholder) | ✅ Done | 2026-03-29 |
+| STEP 4 | (Skipped — merged into STEP 1) | — | — |
+| STEP 5 | Node registration in nodes/__init__.py | ✅ Done | 2026-03-29 |
+| STEP 6 | Full test suite (test_nodes, test_workflow, test_apis, test_generation) | ✅ Done | 2026-03-29 |
+| STEP 7 | Example workflow JSONs (example_shopping.json, with_reviews.json) | ✅ Done | 2026-03-29 |
+| STEP 8 | Verification — pytest 39/39 passing | ✅ Done | 2026-03-29 |
+
+**Next:** Point 3 — Workflow Generation (SFT model integration in backend/main.py)
+
+---
+
+## What Was Actually Implemented
+
+### STEP 0: Migration
+- Copied all files from `project/server/` and `project/chatbot/` into flat structure
+- Updated all import paths (relative → absolute)
+- `backend/main.py`: changed `from workflow import` → `from workflow_engine import`
+- `nodes/base.py`: updated TYPE_CHECKING import
+- Created `start.sh` and `stop.sh` at project root
+- `start.sh` runs `python -m uvicorn backend.main:app` from project root (not from inside backend/)
+- Created `requirements.txt` from `environment.yml`
+- Added `backend/__init__.py` and `frontend/__init__.py` so Python treats them as packages
+
+### STEP 1: Parallel Execution Engine (`workflow_engine/executor.py`)
+- Added `MAX_RETRIES = 3` and `RETRY_DELAYS = [1, 2, 4]` constants
+- Added `_get_execution_levels(execution_order)` — groups topo-sorted nodes into parallel levels using `workflow.get_parent_nodes()`
+- Added `_execute_node(node_name, context)` — single-node execution helper
+- Added `_execute_node_with_retry(node_name, context)` — wraps `_execute_node` with exponential backoff
+- Modified `execute()` to iterate over levels and call `asyncio.gather()` for parallel levels
+- Added `_get_executor_class()` static method with lazy import to avoid circular import (`nodes` → `workflow_engine` → `nodes`)
+
+### STEP 2: ProductSearch Node (`nodes/product_search.py`)
+- `node_type = "productSearch"`
+- Parameters: `source` (mock/fakestoreapi/dummyjson), `category`, `maxResults`
+- Reads query from `input_data.first_json["chatInput"]` or `["query"]`
+- Three backends: `_fetch_fakestoreapi()`, `_fetch_dummyjson()`, `_get_mock_products()`
+- Mock data: 5 hardcoded products (earbuds, headphones, smart watch, etc.)
+- Output: `{"products": [...], "source": "...", "count": N}`
+
+### STEP 3: ReviewAnalyzer Node (`nodes/review_analyzer.py`)
+- `node_type = "reviewAnalyzer"`
+- Parameters: `mode` (simple/rag)
+- Merges products from all upstream sources
+- Simple mode rating bands: `≥4.0 → positive`, `3.0–4.0 → neutral`, `<3.0 → negative`
+- Adds `review_summary`, `review_sentiment`, `review_confidence` to each product
+- RAG mode placeholder falls back to simple
+
+### STEP 5: Node Registry (`nodes/__init__.py`)
+- DeepSeekExecutor import made lazy (try/except) so tests work without `openai` installed
+- Registry has 9 entries: chatTrigger, memoryBufferWindow, toolCode, outputParserStructured, convertToFile, agent, lmChatDeepSeek, productSearch, reviewAnalyzer
+
+### STEP 6: Test Suite
+- `tests/conftest.py`: event loop fixture, auto-asyncio marker
+- `tests/test_nodes.py`: 15 unit tests (ProductSearch + ReviewAnalyzer)
+- `tests/test_workflow.py`: 13 integration tests (parallel levels, timing, session isolation)
+- `tests/test_apis.py`: 7 external API tests (all `@pytest.mark.integration`)
+- `tests/test_generation.py`: 11 validation + round-trip tests
+- `pytest.ini`: `asyncio_mode = auto`, integration marker registered
+
+### STEP 7: Example Workflows
+- `workflows/example_shopping.json`: Trigger → ProductSearch (mock, maxResults=5)
+- `workflows/with_reviews.json`: Trigger → ProductSearch → ReviewAnalyzer (simple)
+
+### Demo Fixes (post-test)
+- `backend/main.py` WORKFLOW_PATH changed from `NUS News ChatBot.json` → `example_shopping.json`
+- `backend/n8n_utils.py` replaced n8n-demo web component with plain markdown formatter
+- `frontend/app.py` updated to render workflow structure as inline markdown (removed broken CustomElement)
+- `start.sh` rewritten to stay in project root and use `python -m uvicorn`
+
+---
+
+## Point 3: Workflow Generation (Upcoming)
+
+The function to replace is `generate_workflow()` in `backend/main.py` (lines 45–57).
+
+### Current (placeholder)
+```python
+def generate_workflow(payload: dict) -> dict:
+    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+```
+
+### Target behaviour
+```python
+def generate_workflow(payload: dict) -> dict:
+    user_query = extract_latest_query(payload.get("chat_history", []))
+    if not user_query:
+        return load_fallback_workflow()
+    workflow_json = call_workflow_generator(user_query)  # LLM call
+    validate_workflow(workflow_json)                      # from test_generation.py
+    return workflow_json
+```
+
+---
+
 ## Overview
 
 The execution engine lives in `workflow_engine/`. The starter kit provides a working sequential executor. We extend it with parallel execution and retry logic.

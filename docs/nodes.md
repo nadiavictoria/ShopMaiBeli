@@ -1,5 +1,19 @@
 # Node Specifications
 
+## Implementation Status
+
+| Node | Type String | File | Status |
+|---|---|---|---|
+| ChatTrigger | `chatTrigger` | `nodes/chat_trigger.py` | ✅ Implemented (starter kit) |
+| Agent | `agent` | `nodes/agent.py` | ✅ Implemented (starter kit) |
+| ConvertToFile | `convertToFile` | `nodes/convert_to_file.py` | ✅ Implemented (starter kit) |
+| DeepSeek LLM | `lmChatDeepSeek` | `nodes/lm_deepseek.py` | ✅ Implemented (starter kit, optional) |
+| MemoryBuffer | `memoryBufferWindow` | `nodes/memory_buffer.py` | ✅ Implemented (starter kit) |
+| OutputParser | `outputParserStructured` | `nodes/output_parser.py` | ✅ Implemented (starter kit) |
+| ToolCode | `toolCode` | `nodes/tool_code.py` | ✅ Implemented (starter kit) |
+| **ProductSearch** | `productSearch` | `nodes/product_search.py` | ✅ **Implemented (2026-03-29)** |
+| **ReviewAnalyzer** | `reviewAnalyzer` | `nodes/review_analyzer.py` | ✅ **Implemented (2026-03-29)** |
+
 ## Overview
 
 Every node executor inherits from `BaseNodeExecutor` (in `nodes/base.py`) and implements:
@@ -69,11 +83,12 @@ Nodes are registered in `nodes/__init__.py` via `NODE_EXECUTOR_REGISTRY`.
 
 ---
 
-## New Nodes (to implement)
+## New Nodes ✅ Implemented (2026-03-29)
 
 ### ProductSearch
 - **File:** `nodes/product_search.py`
 - **Type string:** `productSearch`
+- **Status:** ✅ Complete — all three backends working, 6 unit tests passing
 - **Role:** Fetches product data from external APIs.
 
 #### Parameters (from workflow JSON)
@@ -200,7 +215,8 @@ class ProductSearchExecutor(BaseNodeExecutor):
 ### ReviewAnalyzer
 - **File:** `nodes/review_analyzer.py`
 - **Type string:** `reviewAnalyzer`
-- **Role:** Analyzes product reviews. Two modes: LLM-based summarization (simple) or RAG with FAISS (advanced).
+- **Status:** ✅ Complete — simple mode working, RAG placeholder ready, 9 unit tests passing
+- **Role:** Analyzes product reviews. Two modes: rating-based sentiment (simple) or RAG with FAISS (advanced).
 
 #### Input
 Receives product data from ProductSearch:

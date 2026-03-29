@@ -1,5 +1,23 @@
 # Architecture
 
+## Implementation Status (as of 2026-03-29)
+
+| Component | Status |
+|---|---|
+| Project structure migration | ✅ Complete |
+| `workflow_engine/` — parallel executor, retry logic | ✅ Complete |
+| `nodes/product_search.py` | ✅ Complete |
+| `nodes/review_analyzer.py` | ✅ Complete (simple mode; RAG placeholder) |
+| `backend/main.py` — FastAPI endpoints | ✅ Running |
+| `frontend/app.py` — Chainlit UI | ✅ Running |
+| `start.sh` / `stop.sh` | ✅ Working (must run from project root) |
+| Test suite — 39 tests | ✅ All passing |
+| Workflow generation (LLM → JSON) | 🚧 Placeholder — returns hardcoded `example_shopping.json` |
+| SFT model integration (Qwen) | 🚧 Pending |
+| FAISS review index — RAG mode | 🚧 Pending |
+
+---
+
 ## Project Structure
 
 ```
@@ -91,7 +109,7 @@ shopmaibeli/
 | — | `nodes/review_analyzer.py` | New file |
 | `n8n.html` | `n8n.html` | No changes |
 | `n8n_editable.html` | `n8n_editable.html` | No changes |
-| `start.sh` | `start.sh` | Update paths: `cd frontend` / `cd backend` |
+| `start.sh` | `start.sh` | Rewritten: stays at project root, uses `python -m uvicorn backend.main:app` |
 | `stop.sh` | `stop.sh` | No changes |
 | `environment.yml` | `requirements.txt` | Convert conda env to pip requirements |
 
