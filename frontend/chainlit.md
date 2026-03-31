@@ -1,14 +1,16 @@
-# Welcome to Chainlit! 🚀🤖
+# ShopMaiBeli
 
-Hi there, Developer! 👋 We're excited to have you on board. Chainlit is a powerful tool designed to help you prototype, debug and share applications built on top of LLMs.
+Your AI-powered shopping assistant. Describe what you're looking for and get a personalised product comparison report.
 
-## Useful Links 🔗
+## How it works
 
-- **Documentation:** Get started with our comprehensive [Chainlit Documentation](https://docs.chainlit.io) 📚
-- **Discord Community:** Join our friendly [Chainlit Discord](https://discord.gg/k73SQ3FyUh) to ask questions, share your projects, and connect with other developers! 💬
+1. **Tell me what you need** — e.g. *"Find the best wireless earbuds under $80 with noise cancellation"*
+2. **Watch the workflow** — the sidebar shows each step as it runs
+3. **Get your report** — a ranked HTML comparison report with trust scores
 
-We can't wait to see what you create with Chainlit! Happy coding! 💻😊
+## Example queries
 
-## Welcome screen
-
-To modify the welcome screen, edit the `chainlit.md` file at the root of your project. If you do not want a welcome screen, just leave this file empty.
+- "Best laptop under $1000 for students"
+- "Wireless earbuds with noise cancellation under $80"  
+- "Affordable running shoes with good reviews"
+- "Compare top-rated coffee makers under $150"

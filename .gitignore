@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.claude/
+*.pdf
+models/checkpoints/
+data/reviews/
+*.log
+.DS_Store

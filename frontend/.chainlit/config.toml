@@ -3,7 +3,7 @@
 user_env = []
 
 # Directory for custom React elements
-custom_elements = "/Users/nadia/Documents/ML Sys/project/ShopMaiBeli/frontend/public/elements"
+custom_elements = "public/elements"
 
 # Duration (in seconds) during which the session is saved when the connection is lost
 session_timeout = 3600
@@ -98,7 +98,7 @@ reaction_on_message_received = false
 
 [UI]
 # Name of the assistant.
-name = "Assistant"
+name = "ShopMaiBeli"
 
 # default_theme = "dark"
 
