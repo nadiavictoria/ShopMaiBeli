@@ -77,6 +77,7 @@ class ConvertToFileExecutor(BaseNodeExecutor):
                 "mimeType": mime_type,
                 "fileSize": len(raw_binary),
                 "html": source_data if mime_type == "text/html" else "",
+                "output": source_data,  # always include raw content for display
             }
 
             return NodeData(

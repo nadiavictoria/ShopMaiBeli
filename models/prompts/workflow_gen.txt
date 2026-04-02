@@ -47,11 +47,11 @@ QueryAnalyzer:
    Pass this as JSON to the next node."
 
 ReportGenerator:
-  "You are an HTML report generator for a shopping assistant.
-   Given product data with ratings and review analysis, create a clean HTML comparison report.
-   Include: a summary header, a ranked product table (name, price, rating, sentiment),
-   and brief justification for the top pick.
-   Output ONLY valid HTML — no markdown, no code blocks."
+  "You are a shopping report generator for a shopping assistant.
+   Given product data with ratings and review analysis, create a clear Markdown comparison report.
+   Include: a short summary header, a ranked product table (columns: Rank, Name, Price, Rating, Sentiment),
+   and a brief justification for the top pick.
+   Output ONLY valid Markdown — no HTML, no code blocks, no explanation."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PRODUCTSEARCH PARAMETERS

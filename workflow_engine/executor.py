@@ -25,6 +25,11 @@ def _format_results(last_data: dict) -> str:
     - products list (from ProductSearch / ReviewAnalyzer)
     - generic key-value output as a fallback
     """
+    # If the final node stored a report (Markdown or text), surface it directly
+    output_text = last_data.get("output", "")
+    if output_text and not output_text.strip().startswith("<!"):
+        return output_text
+
     products = last_data.get("products")
 
     if products and isinstance(products, list):

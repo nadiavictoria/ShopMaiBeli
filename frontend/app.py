@@ -15,16 +15,7 @@ def _join_url(base_url: str, path: str) -> str:
 
 
 def _build_html_elements(html: str):
-    """Return a sidebar HtmlPreview element when html content is present."""
-    if not html:
-        return []
-    return [
-        cl.CustomElement(
-            name="HtmlPreview",
-            props={"html": html, "title": "Shopping Report"},
-            display="side",
-        )
-    ]
+    return []
 
 
 async def _render_event(event: dict):
