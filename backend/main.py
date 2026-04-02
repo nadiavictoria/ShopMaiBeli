@@ -6,7 +6,6 @@ Endpoints:
     - POST /run_workflow: Execute the workflow with streaming NDJSON responses
 """
 
-import json
 import logging
 import os
 from fastapi import FastAPI, Body
@@ -18,10 +17,11 @@ import uvicorn
 from dotenv import load_dotenv
 load_dotenv()
 
-# Path to workflow JSON (relative to project root, one level up from backend/)
+# Path to fallback workflow JSON
 WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "example_shopping.json")
 
 from backend.n8n_utils import build_n8n_demo_html
+from backend.workflow_generator import generate_workflow
 from workflow_engine import WorkflowExecutor
 
 # Configure logging
@@ -40,21 +40,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def generate_workflow(payload: dict) -> dict:
-    """
-    Load the example shopping workflow JSON.
-
-    In Point 3 (Workflow Generation), this will be replaced with a function that
-    calls a generative model (Claude API or fine-tuned SFT model) to create
-    workflow JSON based on user queries.
-
-    For now, returns a hardcoded example workflow.
-    """
-    _ = payload  # Reserved for future use (will contain chat history, etc.)
-    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 @app.post("/get_workflow")
@@ -80,32 +65,23 @@ async def get_workflow(payload: dict = Body(default={})):
         }
 
 
-# Global workflow executor instance (lazy loaded)
-_workflow_executor = None
-
-
-def get_workflow_executor() -> WorkflowExecutor:
-    """Get or create the workflow executor instance."""
-    global _workflow_executor
-    if _workflow_executor is None:
-        _workflow_executor = WorkflowExecutor.from_file(WORKFLOW_PATH)
-    return _workflow_executor
-
-
 logger = logging.getLogger(__name__)
 
 
 @app.post("/run_workflow")
 async def run_workflow(payload: dict = Body(default={})):
-    """Run the workflow and stream results as NDJSON."""
+    """Generate a workflow from the user query, then run it and stream NDJSON results."""
     session_id = payload.get("session_id", "default")
     chat_history = payload.get("chat_history", [])
     files = payload.get("files", [])
 
     logger.info(f"[run_workflow] session_id={session_id}, files={len(files)}")
 
+    workflow = generate_workflow(payload)
+    executor = WorkflowExecutor.from_json(workflow)
+
     async def stream():
-        async for n in get_workflow_executor().execute(session_id, chat_history, files):
+        async for n in executor.execute(session_id, chat_history, files):
             yield n.to_json()
 
     return StreamingResponse(

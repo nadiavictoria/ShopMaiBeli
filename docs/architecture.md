@@ -1,6 +1,6 @@
 # Architecture
 
-## Implementation Status (as of 2026-03-29)
+## Implementation Status (as of 2026-04-02)
 
 | Component | Status |
 |---|---|
@@ -12,8 +12,11 @@
 | `frontend/app.py` — Chainlit UI | ✅ Running |
 | `start.sh` / `stop.sh` | ✅ Working (must run from project root) |
 | Test suite — 39 tests | ✅ All passing |
-| Workflow generation (LLM → JSON) | 🚧 Placeholder — returns hardcoded `example_shopping.json` |
-| SFT model integration (Qwen) | 🚧 Pending |
+| Workflow generation (LLM → JSON) | ✅ Complete — `backend/workflow_generator.py` (SFT → DeepSeek → fallback) |
+| SFT training script | ✅ Complete — `models/train.py` (Qwen2.5-3B + LoRA via TRL) |
+| SFT serving config | ✅ Complete — `models/serve.py` (vLLM OpenAI-compatible endpoint) |
+| Training data | ✅ 10 hand-crafted examples — `data/workflows/train.jsonl` |
+| SFT model training (Vast.ai) | 🚧 Pending — run `python models/train.py` on GPU instance |
 | FAISS review index — RAG mode | 🚧 Pending |
 
 ---
