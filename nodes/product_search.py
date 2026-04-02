@@ -75,8 +75,15 @@ class ProductSearchExecutor(BaseNodeExecutor):
             logger.info(f"[{self.node.name}] found {len(products)} products from {source!r}")
 
         except Exception as exc:
-            logger.error(f"[{self.node.name}] fetch failed: {exc}")
-            raise  # let the retry wrapper handle it
+            logger.warning(f"[{self.node.name}] {source!r} failed ({exc}), falling back to dummyjson")
+            try:
+                products = await self._fetch_dummyjson(query, category, max_results)
+                source = "dummyjson (fallback)"
+                logger.info(f"[{self.node.name}] fallback found {len(products)} products")
+            except Exception as exc2:
+                logger.warning(f"[{self.node.name}] dummyjson also failed ({exc2}), using mock data")
+                products = self._get_mock_products(query, max_results)
+                source = "mock (fallback)"
 
         return self.create_output({
             "products": products,

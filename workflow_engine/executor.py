@@ -62,10 +62,12 @@ def _format_results(last_data: dict) -> str:
 
         return "\n".join(lines)
 
-    # Fallback: show non-empty string values from the output dict
+    # Fallback: show non-empty string values from the output dict (skip html — rendered separately)
     if last_data:
         lines = []
         for k, v in last_data.items():
+            if k == "html":
+                continue
             if isinstance(v, str) and v:
                 lines.append(f"**{k}:** {v}")
         return "\n".join(lines)

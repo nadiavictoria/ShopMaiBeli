@@ -56,7 +56,7 @@ ReportGenerator:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PRODUCTSEARCH PARAMETERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  source      "fakestoreapi" | "dummyjson" | "mock"   (use "dummyjson" for keyword search)
+  source      "dummyjson" | "fakestoreapi" | "mock"   (prefer "dummyjson" — more reliable; use "fakestoreapi" only for parallel multi-source workflows)
   category    optional string filter
   maxResults  integer (5–15 recommended)
 

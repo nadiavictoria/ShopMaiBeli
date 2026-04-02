@@ -201,7 +201,18 @@ class AgentExecutor(BaseNodeExecutor):
             return self.get_expression_value(text_template, item, context) or ""
 
         # Default: get chatInput from item
-        return str(item.json_data.get("chatInput", ""))
+        chat_input = str(item.json_data.get("chatInput", ""))
+
+        # Include any structured data (e.g. products from ProductSearch/ReviewAnalyzer)
+        # so agents like ReportGenerator actually see the product list
+        other_data = {k: v for k, v in item.json_data.items() if k != "chatInput"}
+        if other_data:
+            context_str = json.dumps(other_data, ensure_ascii=False, indent=2)
+            if chat_input:
+                return f"{chat_input}\n\nContext data:\n{context_str}"
+            return context_str
+
+        return chat_input
 
     def _build_messages(
         self,
