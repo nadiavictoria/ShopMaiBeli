@@ -22,6 +22,44 @@ logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = 15  # seconds
 
+# Map common product category terms → DummyJSON category slugs
+_DUMMYJSON_CATEGORY_MAP = {
+    "bag": "womens-bags",
+    "bags": "womens-bags",
+    "handbag": "womens-bags",
+    "handbags": "womens-bags",
+    "purse": "womens-bags",
+    "tote": "womens-bags",
+    "backpack": "womens-bags",
+    "laptop": "laptops",
+    "phone": "smartphones",
+    "smartphone": "smartphones",
+    "mobile": "smartphones",
+    "watch": "mens-watches",
+    "smartwatch": "mens-watches",
+    "shirt": "mens-shirts",
+    "dress": "womens-dresses",
+    "shoes": "womens-shoes",
+    "sneakers": "mens-shoes",
+    "furniture": "furniture",
+    "sofa": "furniture",
+    "beauty": "beauty",
+    "makeup": "beauty",
+    "skincare": "skin-care",
+    "fragrance": "fragrances",
+    "perfume": "fragrances",
+    "grocery": "groceries",
+    "food": "groceries",
+    "vehicle": "vehicle",
+    "motorcycle": "motorcycle",
+    "sunglasses": "sunglasses",
+    "jewelry": "womens-jewellery",
+    "jewellery": "womens-jewellery",
+    "electronics": "laptops",
+    "headphones": "mobile-accessories",
+    "earbuds": "mobile-accessories",
+}
+
 
 class ProductSearchExecutor(BaseNodeExecutor):
     """
@@ -54,10 +92,24 @@ class ProductSearchExecutor(BaseNodeExecutor):
         max_results = int(self.get_parameter("maxResults", 10))
 
         # --- Get search query and optional category override from input ---
+        import json as _json
         input_json = input_data.first_json
         query = input_json.get("chatInput", "") or input_json.get("query", "")
-        # If upstream node extracted a category, prefer it
         category = input_json.get("category", category)
+
+        # QueryAnalyzer outputs {"output": "{...json...}"} — parse it to extract
+        # product_category and use it as the search query when nothing else is set
+        output_raw = input_json.get("output", "")
+        if output_raw and isinstance(output_raw, str):
+            try:
+                parsed = _json.loads(output_raw)
+                if isinstance(parsed, dict):
+                    query = query or parsed.get("product_category", "") or ""
+                    category = category or parsed.get("product_category", None)
+            except (_json.JSONDecodeError, TypeError):
+                # output is already plain text (e.g. Markdown) — use as query
+                if not query:
+                    query = output_raw[:100]
 
         logger.info(
             f"[{self.node.name}] source={source!r}, query={query!r}, "
@@ -129,11 +181,21 @@ class ProductSearchExecutor(BaseNodeExecutor):
         max_results: int,
     ) -> List[Dict[str, Any]]:
         """
-        GET https://dummyjson.com/products/search?q=<query>  (if query given)
-        GET https://dummyjson.com/products/category/<cat>    (if category given)
-        GET https://dummyjson.com/products                   (fallback)
+        Prefer category search (more relevant) over keyword search.
+        Maps common product terms to DummyJSON category slugs.
+        Falls back to keyword search, then general listing.
         """
-        if query:
+        # Try to resolve a DummyJSON category slug from query or category
+        slug = None
+        for term in [category, query]:
+            if term:
+                slug = _DUMMYJSON_CATEGORY_MAP.get(term.lower().strip())
+                if slug:
+                    break
+
+        if slug:
+            url = f"https://dummyjson.com/products/category/{slug}?limit={max_results}"
+        elif query:
             url = f"https://dummyjson.com/products/search?q={query}&limit={max_results}"
         elif category:
             url = f"https://dummyjson.com/products/category/{category}?limit={max_results}"
