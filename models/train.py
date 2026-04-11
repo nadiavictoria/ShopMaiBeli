@@ -16,6 +16,7 @@ The trained adapter is saved to --output_dir and can be loaded by models/serve.p
 import argparse
 import json
 import os
+import random
 import sys
 
 # ---------------------------------------------------------------------------
@@ -37,6 +38,12 @@ def parse_args():
     parser.add_argument("--max_seq_len", type=int, default=2048)
     parser.add_argument("--lora_r", type=int, default=64)
     parser.add_argument("--lora_alpha", type=int, default=128)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--strict_validation",
+        action="store_true",
+        help="Fail fast if a training example has invalid workflow JSON",
+    )
     return parser.parse_args()
 
 
@@ -44,7 +51,55 @@ def parse_args():
 # Dataset loading
 # ---------------------------------------------------------------------------
 
-def load_training_examples(data_dir: str) -> list[dict]:
+def _prepare_example(obj: dict, source: str, strict_validation: bool) -> dict | None:
+    """
+    Parse and validate a single training example.
+
+    Training data is expected to contain current workflow JSON. Older examples
+    are normalized where possible so retraining stays aligned with the active
+    backend/frontend behavior.
+    """
+    if "instruction" not in obj or "output" not in obj:
+        print(f"[train] WARNING: {source} missing 'instruction' or 'output', skipping")
+        return None
+
+    try:
+        from backend.workflow_generator import _normalize_report_output, validate_workflow
+    except ImportError:
+        _normalize_report_output = None
+        validate_workflow = None
+
+    try:
+        workflow = json.loads(obj["output"])
+    except json.JSONDecodeError as e:
+        message = f"[train] {'ERROR' if strict_validation else 'WARNING'}: {source} invalid workflow JSON: {e}"
+        print(message, file=sys.stderr if strict_validation else sys.stdout)
+        if strict_validation:
+            sys.exit(1)
+        return None
+
+    if _normalize_report_output is not None:
+        workflow = _normalize_report_output(workflow)
+
+    if validate_workflow is not None:
+        errors = validate_workflow(workflow)
+        if errors:
+            message = (
+                f"[train] {'ERROR' if strict_validation else 'WARNING'}: "
+                f"{source} failed validation: {'; '.join(errors)}"
+            )
+            print(message, file=sys.stderr if strict_validation else sys.stdout)
+            if strict_validation:
+                sys.exit(1)
+            return None
+
+    return {
+        "instruction": str(obj["instruction"]).strip(),
+        "output": json.dumps(workflow, ensure_ascii=False),
+    }
+
+
+def load_training_examples(data_dir: str, strict_validation: bool = False) -> list[dict]:
     """
     Load all .jsonl files from data_dir.
 
@@ -67,12 +122,17 @@ def load_training_examples(data_dir: str) -> list[dict]:
                     continue
                 try:
                     obj = json.loads(line)
-                    if "instruction" not in obj or "output" not in obj:
-                        print(f"[train] WARNING: {fname}:{lineno} missing 'instruction' or 'output', skipping")
-                        continue
-                    examples.append(obj)
+                    prepared = _prepare_example(obj, f"{fname}:{lineno}", strict_validation)
+                    if prepared is not None:
+                        examples.append(prepared)
                 except json.JSONDecodeError as e:
-                    print(f"[train] WARNING: {fname}:{lineno} JSON parse error: {e}")
+                    message = (
+                        f"[train] {'ERROR' if strict_validation else 'WARNING'}: "
+                        f"{fname}:{lineno} JSON parse error: {e}"
+                    )
+                    print(message, file=sys.stderr if strict_validation else sys.stdout)
+                    if strict_validation:
+                        sys.exit(1)
 
     print(f"[train] Loaded {len(examples)} training examples from {data_dir}")
     return examples
@@ -104,13 +164,18 @@ def train(args):
         print("[train] Run: pip install transformers peft trl datasets accelerate bitsandbytes")
         sys.exit(1)
 
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
     # Load system prompt
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "workflow_gen.txt")
     with open(prompt_path, "r", encoding="utf-8") as f:
         system_prompt = f.read()
 
     # Load training data
-    raw_examples = load_training_examples(args.data_dir)
+    raw_examples = load_training_examples(args.data_dir, strict_validation=args.strict_validation)
     if not raw_examples:
         print("[train] ERROR: No training examples found. Add .jsonl files to data/workflows/")
         sys.exit(1)
@@ -178,6 +243,24 @@ def train(args):
     print(f"[train] Saving adapter to {args.output_dir}")
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    metadata = {
+        "base_model": args.base_model,
+        "data_dir": args.data_dir,
+        "epochs": args.epochs,
+        "learning_rate": args.lr,
+        "batch_size": args.batch_size,
+        "gradient_accumulation": args.grad_accum,
+        "max_seq_len": args.max_seq_len,
+        "lora_r": args.lora_r,
+        "lora_alpha": args.lora_alpha,
+        "seed": args.seed,
+        "num_examples": len(dataset),
+    }
+    with open(os.path.join(args.output_dir, "training_metadata.json"), "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+
     print("[train] Done.")
 
 
