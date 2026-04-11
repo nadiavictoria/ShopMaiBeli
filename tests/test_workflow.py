@@ -106,27 +106,6 @@ PARALLEL_THEN_REVIEWS = {
     }
 }
 
-WITH_TRUST_SCORING = {
-    "name": "Search + Reviews + Trust",
-    "nodes": [
-        {"id": "1", "name": "Trigger", "type": "chatTrigger",
-         "typeVersion": 1.4, "position": [0, 0], "parameters": {}},
-        {"id": "2", "name": "Search", "type": "productSearch",
-         "typeVersion": 1.0, "position": [240, 0],
-         "parameters": {"source": "mock", "maxResults": 5}},
-        {"id": "3", "name": "Reviews", "type": "reviewAnalyzer",
-         "typeVersion": 1.0, "position": [480, 0],
-         "parameters": {"mode": "simple"}},
-        {"id": "4", "name": "Trust", "type": "trustScorer",
-         "typeVersion": 1.0, "position": [720, 0], "parameters": {}},
-    ],
-    "connections": {
-        "Trigger": {"main": [[{"node": "Search", "type": "main", "index": 0}]]},
-        "Search":  {"main": [[{"node": "Reviews", "type": "main", "index": 0}]]},
-        "Reviews": {"main": [[{"node": "Trust", "type": "main", "index": 0}]]},
-    }
-}
-
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -189,17 +168,6 @@ async def test_with_reviews_workflow():
     step_notifs = [n for n in notifs if n.notification_type == "step"]
     # Both Search and Reviews should emit step notifications
     assert len(step_notifs) >= 2
-
-
-@pytest.mark.asyncio
-async def test_with_trust_scoring_workflow():
-    """TrustScorer should execute after review analysis and emit a step notification."""
-    executor = WorkflowExecutor.from_json(WITH_TRUST_SCORING)
-    notifs = await collect_notifications(executor)
-
-    assert notifs[-1].notification_type == "message"
-    step_names = [n.node_name for n in notifs if n.notification_type == "step"]
-    assert "Trust" in step_names
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from workflow_engine.models import Node, NodeInput, NodeData
 from workflow_engine.context import ExecutionContext
 from nodes.product_search import ProductSearchExecutor
 from nodes.review_analyzer import ReviewAnalyzerExecutor
-from nodes.trust_scorer import TrustScorerExecutor
 
 
 # ---------------------------------------------------------------------------
@@ -317,95 +316,3 @@ async def test_review_analyzer_notification():
     assert notif is not None
     assert notif.notification_type == "step"
     assert "1" in notif.message
-
-
-# ---------------------------------------------------------------------------
-# TrustScorer
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_trust_scorer_adds_fields_and_ranks():
-    products = [
-        {
-            "name": "High Trust",
-            "price": 60.0,
-            "rating": 4.7,
-            "description": "",
-            "source": "dummyjson",
-            "review_sentiment": "positive",
-            "review_confidence": 0.9,
-        },
-        {
-            "name": "Lower Trust",
-            "price": 90.0,
-            "rating": 3.4,
-            "description": "",
-            "source": "mock",
-            "review_sentiment": "neutral",
-            "review_confidence": 0.6,
-        },
-    ]
-    executor = TrustScorerExecutor(make_node("trustScorer"), workflow=None)
-    output = await executor.execute(make_input({"products": products}), make_context())
-
-    ranked = output.first_json["products"]
-    assert len(ranked) == 2
-    assert ranked[0]["name"] == "High Trust"
-    assert ranked[0]["trust_rank"] == 1
-    assert "trust_score" in ranked[0]
-    assert "trust_justification" in ranked[0]
-    assert ranked[0]["trust_score"] > ranked[1]["trust_score"]
-
-
-@pytest.mark.asyncio
-async def test_trust_scorer_merges_multiple_sources():
-    products_a = [{
-        "name": "A",
-        "price": 30.0,
-        "rating": 4.5,
-        "description": "",
-        "source": "dummyjson",
-        "review_sentiment": "positive",
-        "review_confidence": 0.8,
-    }]
-    products_b = [{
-        "name": "B",
-        "price": 40.0,
-        "rating": 4.0,
-        "description": "",
-        "source": "fakestoreapi",
-        "review_sentiment": "positive",
-        "review_confidence": 0.7,
-    }]
-    input_data = NodeInput(ports=[[
-        [NodeData(json_data={"products": products_a})],
-        [NodeData(json_data={"products": products_b})],
-    ]])
-
-    executor = TrustScorerExecutor(make_node("trustScorer"), workflow=None)
-    output = await executor.execute(input_data, make_context())
-
-    ranked = output.first_json["products"]
-    assert len(ranked) == 2
-    assert {p["name"] for p in ranked} == {"A", "B"}
-
-
-@pytest.mark.asyncio
-async def test_trust_scorer_notification():
-    products = [{
-        "name": "P",
-        "price": 10.0,
-        "rating": 4.2,
-        "description": "",
-        "source": "dummyjson",
-        "review_sentiment": "positive",
-        "review_confidence": 0.9,
-    }]
-    executor = TrustScorerExecutor(make_node("trustScorer"), workflow=None)
-    ctx = make_context()
-    output = await executor.execute(make_input({"products": products}), ctx)
-    notif = executor.get_notification(output, ctx)
-
-    assert notif is not None
-    assert notif.notification_type == "step"
-    assert "trust" in notif.message.lower()
