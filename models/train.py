@@ -98,7 +98,7 @@ def train(args):
         from datasets import Dataset
         from peft import LoraConfig, TaskType, get_peft_model
         from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
-        from trl import SFTTrainer
+        from trl import SFTConfig, SFTTrainer
     except ImportError as e:
         print(f"[train] ERROR: Missing dependency: {e}")
         print("[train] Run: pip install transformers peft trl datasets accelerate bitsandbytes")
@@ -148,7 +148,7 @@ def train(args):
     model.print_trainable_parameters()
 
     # Training arguments
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
@@ -161,15 +161,15 @@ def train(args):
         save_strategy="epoch",
         save_total_limit=2,
         report_to="none",
+        dataset_text_field="text",
+        max_length=args.max_seq_len,
     )
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         args=training_args,
         train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_len,
     )
 
     print("[train] Starting training...")
