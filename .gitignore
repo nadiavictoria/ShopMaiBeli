@@ -20,3 +20,12 @@ data/products/
 
 # Claude Code
 .claude/
+
+# Local runtime / UI state
+.chainlit/
+*.pid
+*.log
+
+# Local virtual environments
+venv/
+.venv/

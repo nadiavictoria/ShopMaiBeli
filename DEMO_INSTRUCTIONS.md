@@ -1,58 +1,78 @@
-# Demo Instructions — ShopMaiBeli Execution Engine
+# Demo Instructions — ShopMaiBeli
 
-## Quick Start (2 minutes)
+This guide covers two demo modes:
+
+- `Fallback demo`: fastest local setup, uses fallback workflows and may use mock data
+- `SFT demo`: uses the fine-tuned workflow generator served from a GPU machine, with DeepSeek still used inside workflow agent nodes
+
+---
+
+## Quick Start
 
 ### 1. Install Dependencies
 
-```bash
-# From the project root — activate your virtual environment first
-source ./my-venv/bin/activate
+From the project root:
 
-# Install all requirements
-pip install -r requirements.txt
+```bash
+source venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-### 2. Start Both Services
+### 2. Configure Environment
+
+For local workflow execution with DeepSeek-backed agent nodes:
 
 ```bash
-# Always run from the project root
+cat > backend/.env <<'EOF'
+DEEPSEEK_API_KEY=your_key_here
+EOF
+```
+
+If you are also using the SFT model through an SSH tunnel on your Mac:
+
+```bash
+cat > backend/.env <<'EOF'
+SFT_MODEL_URL=http://localhost:8001
+DEEPSEEK_API_KEY=your_key_here
+EOF
+```
+
+### 3. Start Both Services
+
+```bash
 ./start.sh
 ```
 
 This launches:
-- **Backend** on http://localhost:8888 (FastAPI + Workflow Executor)
-- **Frontend** on http://localhost:8000 (Chainlit UI)
 
-Logs are written to `backend.log` and `frontend.log` in the project root.
+- `Backend` on `http://localhost:8888`
+- `Frontend` on `http://localhost:8000`
 
-### 3. Open the Frontend
+Logs are written to `backend.log` and `frontend.log`.
 
-Visit **http://localhost:8000** in your browser. You should see the Chainlit chat interface.
+### 4. Verify the Backend
 
-### 4. Try the Demo
-
-Send a message like:
-```
-find earbuds
+```bash
+curl http://localhost:8888/health
 ```
 
-**What happens step by step:**
-1. Frontend sends query to backend `/get_workflow` → displays workflow structure
-2. Frontend sends query to backend `/run_workflow` → streams execution
-3. Backend loads `workflows/example_shopping.json`
-4. Execution engine runs the workflow:
-   - **Trigger** node extracts the query
-   - **ProductSearch** node searches using mock data
-   - Each step streams back to the chat in real time
-5. Final result shows the found products
+Expected:
 
-**Try different queries** (all use offline mock data):
-- "headphones"
-- "smart watch"
-- "usb charger"
-- "laptop bag"
+```json
+{"status":"ok"}
+```
 
-### 5. Stop the Application
+### 5. Open the Frontend
+
+Visit:
+
+```text
+http://localhost:8000
+```
+
+You can now type directly into the chat box. Plain messages default to `run_workflow`.
+
+### 6. Stop the App
 
 ```bash
 ./stop.sh
@@ -60,137 +80,257 @@ find earbuds
 
 ---
 
-## What's Being Demonstrated
+## Demo Modes
 
-### ✅ Execution Engine (Points 1 & 2)
+### Fallback Demo
 
-**Parallel execution** — nodes with no mutual dependencies run concurrently via `asyncio.gather()`:
-```
-Trigger → [Search A, Search B] → ReviewAnalyzer
-               ↑ these two run in parallel
-```
+This is the simplest path when you only want to show the app running locally.
 
-**Retry with exponential backoff** — each node retries up to 3 times on failure (delays: 1s, 2s, 4s)
+What it demonstrates:
 
-**ProductSearch node** (`nodes/product_search.py`):
-- `source: "mock"` — 5 hardcoded products, no network needed
-- `source: "fakestoreapi"` — live data from fakestoreapi.com
-- `source: "dummyjson"` — live data from dummyjson.com
+- frontend/backend integration
+- workflow execution
+- streaming progress updates
+- retry/fallback behavior
 
-**ReviewAnalyzer node** (`nodes/review_analyzer.py`):
-- Adds `review_sentiment`, `review_summary`, `review_confidence` to each product
-- Simple mode: derives sentiment from product rating (≥4.0 → positive, 3.0-4.0 → neutral, <3.0 → negative)
-- RAG mode: placeholder, falls back to simple (FAISS integration pending)
+What it may use:
 
-### ✅ Test Suite
+- generated workflows from DeepSeek, if configured
+- fallback workflow JSON if generation is unavailable
+- live product APIs where possible
+- mock fallback if external product search fails
 
-39 tests, all passing. No network required for the core tests:
+Good test queries:
 
-```bash
-pytest tests/ -v -m "not integration"
-```
+- `find me wireless earbuds under $80`
+- `i want to buy a samsung galaxy watch`
+- `show me laptops with good reviews`
 
-Test files:
-- `tests/test_nodes.py` — 15 unit tests (ProductSearch + ReviewAnalyzer)
-- `tests/test_workflow.py` — 13 workflow-level tests (parallel execution, session isolation)
-- `tests/test_generation.py` — 11 validation tests (workflow JSON structure)
-- `tests/test_apis.py` — 7 integration tests (requires network, run with `-m integration`)
+### SFT Demo
 
-### ✅ Example Workflows
+This uses your fine-tuned workflow generator for the `/get_workflow` and `/run_workflow` planning step.
 
-Two ready-to-use workflow JSON files in `workflows/`:
+Important:
 
-| File | Pipeline |
-|---|---|
-| `example_shopping.json` | Trigger → ProductSearch (mock) |
-| `with_reviews.json` | Trigger → ProductSearch → ReviewAnalyzer |
+- the SFT model replaces workflow generation
+- DeepSeek is still required for `QueryAnalyzer` and `ReportGenerator` nodes in the current workflow design
 
-### 🚧 Workflow Generation (Point 3 — Upcoming)
+So the current runtime split is:
 
-Currently `generate_workflow()` in `backend/main.py` returns the hardcoded `example_shopping.json`.
-
-Next step: replace this with an LLM call (Claude API or fine-tuned Qwen SFT model) that generates workflow JSON dynamically from the user's query.
+- `SFT model`: generates the workflow JSON
+- `DeepSeek`: powers agent reasoning nodes inside that workflow
 
 ---
 
-## Running Services Manually (for debugging)
+## SFT Setup
 
-If `./start.sh` doesn't work, start each service manually from the **project root**:
+### 1. Train the SFT Model on a GPU Machine
 
-**Terminal 1 — Backend:**
+On the GPU environment:
+
 ```bash
-source ./my-venv/bin/activate
-python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8888
+python models/train.py \
+  --data_dir data/workflows \
+  --output_dir models/checkpoints/shopmaibeli-sft \
+  --epochs 3
 ```
 
-**Terminal 2 — Frontend:**
-```bash
-source ./my-venv/bin/activate
-chainlit run frontend/app.py --port 8000
+This saves the LoRA adapter under:
+
+```text
+models/checkpoints/shopmaibeli-sft
 ```
 
-**Verify backend is running:**
+### 2. Serve the Adapter with vLLM
+
+On a GPU node:
+
 ```bash
-curl http://localhost:8888/health
-# Expected: {"status":"ok"}
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --enable-lora \
+  --lora-modules shopmaibeli-sft=models/checkpoints/shopmaibeli-sft \
+  --max-lora-rank 64 \
+  --port 8001 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.9 \
+  --dtype bfloat16 \
+  --trust-remote-code
 ```
+
+### 3. Verify the Model Server
+
+From another shell on the same network:
+
+```bash
+curl http://<gpu-node-hostname>:8001/v1/models
+```
+
+You should see both the base model and `shopmaibeli-sft`.
+
+### 4. Tunnel the Model to Your Mac
+
+If the model is running on a cluster GPU node and your app is running locally:
+
+```bash
+ssh -L 8001:<gpu-node-hostname>:8001 your_soc_unix_id@xlogin.comp.nus.edu.sg
+```
+
+Leave that SSH session open. Then verify from your Mac:
+
+```bash
+curl http://localhost:8001/v1/models
+```
+
+### 5. Point the Backend to SFT
+
+On your local machine:
+
+```bash
+cat > backend/.env <<'EOF'
+SFT_MODEL_URL=http://localhost:8001
+DEEPSEEK_API_KEY=your_key_here
+EOF
+```
+
+Restart the app:
+
+```bash
+./stop.sh
+./start.sh
+```
+
+### 6. Confirm the App Is Using SFT
+
+After sending a chat message, inspect the backend log:
+
+```bash
+tail -n 100 backend.log
+```
+
+You want to see:
+
+```text
+[generate_workflow] SFT model succeeded
+```
+
+---
+
+## What Is Implemented
+
+### Workflow Execution
+
+- parallel execution with `asyncio.gather()`
+- retry with exponential backoff
+- graceful fallback when product search sources fail
+
+### Nodes
+
+- `ChatTrigger`
+- `QueryAnalyzer` via agent node
+- `ProductSearch`
+- `ReviewAnalyzer`
+- `ReportGenerator`
+- `ConvertToFile`
+
+### Workflow Generation
+
+- SFT model via `SFT_MODEL_URL`
+- DeepSeek fallback via `DEEPSEEK_API_KEY`
+- hardcoded fallback workflow as final safety net
+
+### Tests
+
+Run non-integration tests with:
+
+```bash
+python -m pytest tests/ -v -m "not integration"
+```
+
+Current expected result:
+
+- `40 passed`
+- `10 deselected`
+
+---
+
+## Known Limitations
+
+- The current workflow execution still uses DeepSeek for agent nodes even when SFT is enabled.
+- `ReviewAnalyzer` RAG mode is still a placeholder and falls back to simple rating-based analysis.
+- The trained SFT data may still prefer HTML-style report workflows, so the backend currently normalizes report prompts/output back toward Markdown for frontend reliability.
+- Product search uses external demo/sample APIs (`dummyjson`, `fakestoreapi`) rather than production commerce APIs.
 
 ---
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'workflow_engine'`**
-→ You're not running from the project root. Always use `./start.sh` or `python -m uvicorn` from the root.
+### `async def functions are not natively supported`
 
-**`ModuleNotFoundError: No module named 'openai'`**
-→ `openai` is optional (only needed for DeepSeek LLM nodes). Install it with `pip install openai` or ignore — tests will still pass without it.
+You are probably running the wrong pytest binary. Use:
 
-**Tests failing with `async def functions are not natively supported`**
-→ Your `pytest` is from the wrong Python environment. Run with the venv pytest:
 ```bash
-./my-venv/bin/pytest tests/ -v -m "not integration"
+python -m pytest tests/ -v -m "not integration"
 ```
 
-**`Streaming request failed: All connection attempts failed`**
-→ Backend isn't running. Check `backend.log` and verify `curl http://localhost:8888/health` returns OK.
+### `DeepSeek API key not found`
 
-**Port already in use:**
+Your workflow contains agent nodes using DeepSeek, but `backend/.env` does not contain:
+
+```text
+DEEPSEEK_API_KEY=...
+```
+
+### `SFT model failed`
+
+Check:
+
 ```bash
-lsof -i :8888   # find process using port
+curl http://localhost:8001/v1/models
+tail -n 100 backend.log
+```
+
+If `localhost:8001` is tunneled from a cluster node, make sure:
+
+- the GPU serving process is still running
+- the SSH tunnel terminal is still open
+
+### Product search falls back to mock
+
+Check `backend.log` for:
+
+- invalid product API URL construction
+- DummyJSON/FakeStore failures
+- fallback messages like `using mock data`
+
+### Ports already in use
+
+```bash
 lsof -i :8000
-./stop.sh       # or just stop existing services
+lsof -i :8888
+./stop.sh
 ```
 
 ---
 
-## Architecture Overview
+## Demo Checklist
 
-```
-User Message (http://localhost:8000)
-       │
-       ▼ HTTP POST /get_workflow + /run_workflow
-FastAPI Backend (http://localhost:8888)
-  backend/main.py
-       │
-       ▼ loads JSON
-workflows/example_shopping.json
-       │
-       ▼ parses DAG
-workflow_engine/
-  ├── workflow.py    → topological sort
-  ├── executor.py    → parallel levels + asyncio.gather()
-  └── context.py     → session state
-       │
-       ▼ delegates to
-nodes/
-  ├── chat_trigger.py   → extracts query
-  ├── product_search.py → fetches products (mock/live)
-  └── review_analyzer.py → adds sentiment
-       │
-       ▼ streams NodeNotification objects
-Frontend renders steps + final message
+For a live SFT demo, keep these running:
+
+1. GPU-node model server on port `8001`
+2. SSH tunnel from your Mac to the GPU node
+3. local `./start.sh` app session
+
+Before presenting:
+
+```bash
+curl http://localhost:8001/v1/models
+curl http://localhost:8888/health
+tail -n 50 backend.log
 ```
 
----
+You want to confirm:
 
-**Reference:** See `docs/implementation-plan.md` for the full technical implementation log.
+- the SFT model endpoint is reachable
+- the backend is healthy
+- the backend logs show `SFT model succeeded`

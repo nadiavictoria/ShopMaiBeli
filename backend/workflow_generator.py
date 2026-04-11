@@ -121,6 +121,46 @@ def validate_workflow(workflow: dict) -> list[str]:
     return errors
 
 
+def _normalize_report_output(workflow: dict) -> dict:
+    """
+    Normalize generated workflows to the frontend's current Markdown-first UX.
+
+    Older prompts/training examples may emit HTML-focused report generators and
+    `.html` file targets. We rewrite those to Markdown so the Chainlit frontend
+    can display the final report cleanly without raw HTML leakage.
+    """
+    nodes = workflow.get("nodes", [])
+    for node in nodes:
+        node_type = node.get("type", "")
+        node_name = node.get("name", "")
+        parameters = node.setdefault("parameters", {})
+
+        if node_type.endswith(".agent") and node_name == "ReportGenerator":
+            options = parameters.setdefault("options", {})
+            system_message = options.get("systemMessage", "")
+            if "HTML" in system_message or "html" in system_message:
+                options["systemMessage"] = (
+                    "You are a shopping report generator for a shopping assistant. "
+                    "You will receive a list of real products fetched from a product API, "
+                    "along with their prices, ratings, and review sentiments. "
+                    "Using ONLY the products provided in the input data, create a clear "
+                    "Markdown comparison report. Include: a short summary header naming "
+                    "the category/query, a ranked product table (columns: Rank, Name, "
+                    "Price, Rating, Sentiment), and a brief justification for the top pick. "
+                    "If the exact brand requested is not in the data, note that and "
+                    "recommend the best available alternatives. Output ONLY valid Markdown "
+                    "— no HTML, no code blocks, no explanation."
+                )
+
+        if node_type == "n8n-nodes-base.convertToFile":
+            options = parameters.setdefault("options", {})
+            file_name = options.get("fileName", "")
+            if file_name.endswith(".html"):
+                options["fileName"] = file_name[:-5] + ".md"
+
+    return workflow
+
+
 # ---------------------------------------------------------------------------
 # JSON extraction from LLM output
 # ---------------------------------------------------------------------------
@@ -236,6 +276,7 @@ def generate_workflow(payload: dict) -> dict:
     if os.environ.get("SFT_MODEL_URL"):
         try:
             workflow = _call_sft_model(user_query)
+            workflow = _normalize_report_output(workflow)
             errors = validate_workflow(workflow)
             if not errors:
                 logger.info("[generate_workflow] SFT model succeeded")
@@ -248,6 +289,7 @@ def generate_workflow(payload: dict) -> dict:
     if os.environ.get("DEEPSEEK_API_KEY"):
         try:
             workflow = _call_deepseek_fallback(user_query)
+            workflow = _normalize_report_output(workflow)
             errors = validate_workflow(workflow)
             if not errors:
                 logger.info("[generate_workflow] DeepSeek fallback succeeded")
@@ -258,4 +300,4 @@ def generate_workflow(payload: dict) -> dict:
 
     # 3. Final fallback
     logger.info("[generate_workflow] Using hardcoded fallback workflow")
-    return _load_fallback_workflow()
+    return _normalize_report_output(_load_fallback_workflow())
