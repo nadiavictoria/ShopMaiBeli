@@ -108,7 +108,7 @@ async def on_message(message: cl.Message):
 
     - "get_workflow"   -> POST {base_url}/get_workflow (single response)
     - "run_workflow"   -> POST {base_url}/run_workflow (streaming NDJSON)
-    - otherwise        -> error
+    - otherwise        -> default to run_workflow for normal chat UX
     """
     base_url = (cl.user_session.get("base_url") or "").strip()
     if not base_url:
@@ -118,7 +118,7 @@ async def on_message(message: cl.Message):
     # Extract files from message
     files = await _get_files_from_message(message)
 
-    cmd = getattr(message, "command", None)
+    cmd = getattr(message, "command", None) or "run_workflow"
     if cmd == "get_workflow":
         url = _join_url(base_url, "get_workflow")
         await _handle_single_response(url, files)
@@ -127,7 +127,7 @@ async def on_message(message: cl.Message):
         await _handle_streaming_response(url, files)
     else:
         await cl.Message(
-            content="Error: no valid command selected. Please choose 'get_workflow' or 'run_workflow' and resend."
+            content=f"Error: unsupported command '{cmd}'. Please choose 'get_workflow' or 'run_workflow'."
         ).send()
 
 

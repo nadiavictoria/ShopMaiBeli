@@ -7,8 +7,11 @@ Supports three backends:
   mock          hardcoded test data (no network required)
 """
 
+import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from urllib.parse import quote
 
 import httpx
 
@@ -81,6 +84,47 @@ class ProductSearchExecutor(BaseNodeExecutor):
 
     node_type = "productSearch"
 
+    @staticmethod
+    def _extract_structured_output(output_raw: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract a JSON object from agent output.
+
+        Agents may return plain JSON or a fenced code block like:
+        ```json
+        {...}
+        ```
+        """
+        if not output_raw or not isinstance(output_raw, str):
+            return None
+
+        text = re.sub(r"```(?:json)?\s*", "", output_raw)
+        text = re.sub(r"```\s*", "", text).strip()
+
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        for index, char in enumerate(text[start:], start):
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(text[start:index + 1])
+                        return parsed if isinstance(parsed, dict) else None
+                    except (json.JSONDecodeError, TypeError):
+                        return None
+
+        return None
+
     async def execute(
         self,
         input_data: NodeInput,
@@ -92,7 +136,6 @@ class ProductSearchExecutor(BaseNodeExecutor):
         max_results = int(self.get_parameter("maxResults", 10))
 
         # --- Get search query and optional category override from input ---
-        import json as _json
         input_json = input_data.first_json
         query = input_json.get("chatInput", "") or input_json.get("query", "")
         category = input_json.get("category", category)
@@ -101,15 +144,13 @@ class ProductSearchExecutor(BaseNodeExecutor):
         # product_category and use it as the search query when nothing else is set
         output_raw = input_json.get("output", "")
         if output_raw and isinstance(output_raw, str):
-            try:
-                parsed = _json.loads(output_raw)
-                if isinstance(parsed, dict):
-                    query = query or parsed.get("product_category", "") or ""
-                    category = category or parsed.get("product_category", None)
-            except (_json.JSONDecodeError, TypeError):
+            parsed = self._extract_structured_output(output_raw)
+            if parsed:
+                query = query or parsed.get("product_category", "") or ""
+                category = category or parsed.get("product_category", None)
+            elif not query:
                 # output is already plain text (e.g. Markdown) — use as query
-                if not query:
-                    query = output_raw[:100]
+                query = output_raw[:100]
 
         logger.info(
             f"[{self.node.name}] source={source!r}, query={query!r}, "
@@ -196,7 +237,7 @@ class ProductSearchExecutor(BaseNodeExecutor):
         if slug:
             url = f"https://dummyjson.com/products/category/{slug}?limit={max_results}"
         elif query:
-            url = f"https://dummyjson.com/products/search?q={query}&limit={max_results}"
+            url = f"https://dummyjson.com/products/search?q={quote(query)}&limit={max_results}"
         elif category:
             url = f"https://dummyjson.com/products/category/{category}?limit={max_results}"
         else:

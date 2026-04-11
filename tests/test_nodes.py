@@ -115,6 +115,32 @@ async def test_product_search_accepts_query_key():
 
 
 @pytest.mark.asyncio
+async def test_product_search_extracts_query_analyzer_json_block():
+    """Fenced JSON agent output should be parsed into a clean category/query."""
+    executor = ProductSearchExecutor(
+        make_node("productSearch", {"source": "mock"}),
+        workflow=None,
+    )
+    output = await executor.execute(
+        make_input({
+            "output": """```json
+{
+  "product_category": "smartwatch",
+  "budget": null,
+  "priorities": [],
+  "preferred_brands": ["Samsung"]
+}
+```"""
+        }),
+        make_context(),
+    )
+
+    products = output.first_json.get("products", [])
+    assert products, "Expected products parsed from structured agent output"
+    assert any("watch" in p["name"].lower() or "watch" in p["description"].lower() for p in products)
+
+
+@pytest.mark.asyncio
 async def test_product_search_notification():
     executor = ProductSearchExecutor(
         make_node("productSearch", {"source": "mock"}),
