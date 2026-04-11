@@ -15,7 +15,6 @@ def _join_url(base_url: str, path: str) -> str:
 
 
 def _build_html_elements(html: str):
-    """No custom elements needed - html is now displayed as markdown in the message."""
     return []
 
 
@@ -37,8 +36,7 @@ async def _render_event(event: dict):
 
     # Combine text with workflow structure (markdown)
     if t == "message":
-        content = f"{text}\n\n{html}" if html else text
-        await cl.Message(content=content, elements=elements).send()
+        await cl.Message(content=text, elements=elements).send()
     elif t == "step":
         output = f"{text}\n\n{html}" if html else text
         async with cl.Step(

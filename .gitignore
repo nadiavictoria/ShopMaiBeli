@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Models / checkpoints
+models/checkpoints/
+
+# Data (large files)
+data/reviews/*.json
+data/products/
+
+# OS
+.DS_Store
+
+# Claude Code
+.claude/
