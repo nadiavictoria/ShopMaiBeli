@@ -1,6 +1,6 @@
 {
   "id": "example-shopping-01",
-  "name": "Simple Shopping Search",
+  "name": "Shopping Search with Trust Scoring",
   "nodes": [
     {
       "id": "node-trigger-01",
@@ -20,6 +20,26 @@
         "source": "mock",
         "maxResults": 5
       }
+    },
+    {
+      "id": "node-reviews-01",
+      "name": "Review Analyzer",
+      "type": "reviewAnalyzer",
+      "typeVersion": 1.0,
+      "position": [480, 0],
+      "parameters": {
+        "mode": "simple"
+      }
+    },
+    {
+      "id": "node-trust-01",
+      "name": "Trust Scorer",
+      "type": "trustScorer",
+      "typeVersion": 1.0,
+      "position": [720, 0],
+      "parameters": {
+        "topK": 5
+      }
     }
   ],
   "connections": {
@@ -27,6 +47,20 @@
       "main": [
         [
           { "node": "Product Search", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Product Search": {
+      "main": [
+        [
+          { "node": "Review Analyzer", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Review Analyzer": {
+      "main": [
+        [
+          { "node": "Trust Scorer", "type": "main", "index": 0 }
         ]
       ]
     }

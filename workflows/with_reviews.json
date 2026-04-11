@@ -1,6 +1,6 @@
 {
   "id": "with-reviews-01",
-  "name": "Shopping Search with Review Analysis",
+  "name": "Shopping Search with Review Analysis and Trust Scoring",
   "nodes": [
     {
       "id": "node-trigger-01",
@@ -30,6 +30,16 @@
       "parameters": {
         "mode": "simple"
       }
+    },
+    {
+      "id": "node-trust-01",
+      "name": "Trust Scorer",
+      "type": "trustScorer",
+      "typeVersion": 1.0,
+      "position": [720, 0],
+      "parameters": {
+        "topK": 5
+      }
     }
   ],
   "connections": {
@@ -44,6 +54,13 @@
       "main": [
         [
           { "node": "Review Analyzer", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Review Analyzer": {
+      "main": [
+        [
+          { "node": "Trust Scorer", "type": "main", "index": 0 }
         ]
       ]
     }

@@ -11,6 +11,7 @@ from .convert_to_file import ConvertToFileExecutor
 from .agent import AgentExecutor
 from .product_search import ProductSearchExecutor
 from .review_analyzer import ReviewAnalyzerExecutor
+from .trust_scorer import TrustScorerExecutor
 
 # Lazy import for DeepSeekExecutor (requires openai package)
 _DeepSeekExecutor = None
@@ -38,6 +39,7 @@ NODE_EXECUTOR_REGISTRY = {
     "agent": AgentExecutor,
     "productSearch": ProductSearchExecutor,
     "reviewAnalyzer": ReviewAnalyzerExecutor,
+    "trustScorer": TrustScorerExecutor,
 }
 
 # Register DeepSeekExecutor only if it can be imported
@@ -61,6 +63,7 @@ __all__ = [
     "AgentExecutor",
     "ProductSearchExecutor",
     "ReviewAnalyzerExecutor",
+    "TrustScorerExecutor",
     "NODE_EXECUTOR_REGISTRY",
     "get_executor_class",
 ]
