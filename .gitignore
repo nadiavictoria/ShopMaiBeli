@@ -10,6 +10,9 @@ __pycache__/
 
 # Models / checkpoints
 models/checkpoints/
+artifacts/
+shopmaibeli-sft-v3/
+train-*.log
 
 # Data (large files)
 data/reviews/*.json
@@ -19,6 +22,7 @@ shopping_queries_dataset_products.parquet
 output/
 data/workflows/old_train.jsonl
 data/workflows/train_from_esci_raw.jsonl
+Artifacts.zip
 
 # OS
 .DS_Store
