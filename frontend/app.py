@@ -15,7 +15,16 @@ def _join_url(base_url: str, path: str) -> str:
 
 
 def _build_html_elements(html: str):
-    return []
+    if not html or not html.strip():
+        return []
+
+    return [
+        cl.CustomElement(
+            name="HtmlPreview",
+            props={"html": html, "title": "HTML Preview"},
+            display="side",
+        )
+    ]
 
 
 async def _render_event(event: dict):
@@ -38,14 +47,13 @@ async def _render_event(event: dict):
     if t == "message":
         await cl.Message(content=text, elements=elements).send()
     elif t == "step":
-        output = f"{text}\n\n{html}" if html else text
         async with cl.Step(
             name=name,
             type="run",
             show_input=False,
             elements=elements,
         ) as step:
-            step.output = output
+            step.output = text
     else:
         await cl.Message(content=f"Error: unsupported event type '{t}'").send()
 

@@ -38,6 +38,8 @@ def parse_args():
                         help="Maximum sequence length")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.90,
                         help="Fraction of GPU memory to use")
+    parser.add_argument("--max_lora_rank", type=int, default=64,
+                        help="Maximum LoRA rank allowed by the vLLM server")
     return parser.parse_args()
 
 
@@ -53,6 +55,7 @@ def serve(args):
         "--model", args.base_model,
         "--enable-lora",
         "--lora-modules", f"{args.model_name}={args.adapter_path}",
+        "--max-lora-rank", str(args.max_lora_rank),
         "--port", str(args.port),
         "--max-model-len", str(args.max_model_len),
         "--gpu-memory-utilization", str(args.gpu_memory_utilization),

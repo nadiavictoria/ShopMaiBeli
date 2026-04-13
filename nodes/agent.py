@@ -497,6 +497,9 @@ class AgentExecutor(BaseNodeExecutor):
   <h2>Tool Calls</h2>
 ''']
 
+        # Truncate message for display
+        display_text = response[:200] + "..." if len(response) > 200 else response
+
         if self._tool_call_records:
             for i, record in enumerate(self._tool_call_records, 1):
                 tool_name = record["tool"]
@@ -514,15 +517,17 @@ class AgentExecutor(BaseNodeExecutor):
   </div>
 ''')
         else:
-            html_parts.append('  <p class="no-tools">No tool calls were made.</p>\n')
+            return NodeNotification(
+                node_name=self.node.name,
+                session_id=context.session_id,
+                message=display_text,
+                html="",
+            )
 
         html_parts.append('''</body>
 </html>''')
 
         html = "".join(html_parts)
-
-        # Truncate message for display
-        display_text = response[:200] + "..." if len(response) > 200 else response
 
         return NodeNotification(
             node_name=self.node.name,
