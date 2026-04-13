@@ -6,7 +6,7 @@ Fine-tunes Qwen2.5-3B-Instruct on (query → workflow JSON) pairs using LoRA.
 Usage (on Vast.ai RTX 5080):
     pip install transformers peft trl datasets accelerate bitsandbytes
     python models/train.py \
-        --data_dir data/workflows \
+        --data_dir data/workflows/train.jsonl \
         --output_dir models/checkpoints/shopmaibeli-sft \
         --epochs 3
 
@@ -27,8 +27,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="SFT fine-tuning for workflow generation")
     parser.add_argument("--base_model", default="Qwen/Qwen2.5-3B-Instruct",
                         help="HuggingFace model ID for the base model")
-    parser.add_argument("--data_dir", default="data/workflows",
-                        help="Directory containing training JSONL files")
+    parser.add_argument("--data_dir", default="data/workflows/train.jsonl",
+                        help="Training JSONL file or directory containing training JSONL files")
     parser.add_argument("--output_dir", default="models/checkpoints/shopmaibeli-sft",
                         help="Where to save the LoRA adapter")
     parser.add_argument("--epochs", type=int, default=3)
@@ -64,9 +64,8 @@ def _prepare_example(obj: dict, source: str, strict_validation: bool) -> dict | 
         return None
 
     try:
-        from backend.workflow_generator import _normalize_report_output, validate_workflow
+        from backend.workflow_generator import validate_workflow
     except ImportError:
-        _normalize_report_output = None
         validate_workflow = None
 
     try:
@@ -77,9 +76,6 @@ def _prepare_example(obj: dict, source: str, strict_validation: bool) -> dict | 
         if strict_validation:
             sys.exit(1)
         return None
-
-    if _normalize_report_output is not None:
-        workflow = _normalize_report_output(workflow)
 
     if validate_workflow is not None:
         errors = validate_workflow(workflow)
@@ -101,20 +97,25 @@ def _prepare_example(obj: dict, source: str, strict_validation: bool) -> dict | 
 
 def load_training_examples(data_dir: str, strict_validation: bool = False) -> list[dict]:
     """
-    Load all .jsonl files from data_dir.
+    Load training examples from a JSONL file or all .jsonl files in a directory.
 
     Each line must be a JSON object with 'instruction' and 'output' keys:
       {"instruction": "Find wireless earbuds under $80", "output": "{...workflow json...}"}
     """
     examples = []
-    if not os.path.isdir(data_dir):
-        print(f"[train] ERROR: data_dir '{data_dir}' does not exist", file=sys.stderr)
+    if os.path.isfile(data_dir):
+        files_to_load = [(os.path.basename(data_dir), data_dir)]
+    elif os.path.isdir(data_dir):
+        files_to_load = [
+            (fname, os.path.join(data_dir, fname))
+            for fname in sorted(os.listdir(data_dir))
+            if fname.endswith(".jsonl")
+        ]
+    else:
+        print(f"[train] ERROR: data path '{data_dir}' does not exist", file=sys.stderr)
         sys.exit(1)
 
-    for fname in sorted(os.listdir(data_dir)):
-        if not fname.endswith(".jsonl"):
-            continue
-        path = os.path.join(data_dir, fname)
+    for fname, path in files_to_load:
         with open(path, "r", encoding="utf-8") as f:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()

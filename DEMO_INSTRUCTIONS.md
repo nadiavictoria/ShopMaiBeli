@@ -130,10 +130,16 @@ On the GPU environment:
 
 ```bash
 python models/train.py \
-  --data_dir data/workflows \
+  --data_dir data/workflows/train.jsonl \
   --output_dir models/checkpoints/shopmaibeli-sft \
-  --epochs 3
+  --epochs 3 \
+  --strict_validation \
+  --seed 42
 ```
+
+Use the single curated training file, not the whole `data/workflows/` directory.
+That directory contains multiple `.jsonl` files, and the directory form would mix
+in older datasets unintentionally.
 
 This saves the LoRA adapter under:
 

@@ -14,6 +14,11 @@ models/checkpoints/
 # Data (large files)
 data/reviews/*.json
 data/products/
+shopping_queries_dataset_examples.parquet
+shopping_queries_dataset_products.parquet
+output/
+data/workflows/old_train.jsonl
+data/workflows/train_from_esci_raw.jsonl
 
 # OS
 .DS_Store
@@ -29,3 +34,7 @@ data/products/
 # Local virtual environments
 venv/
 .venv/
+
+# Local documents
+midterm_report.pdf
+project2_brief.pdf

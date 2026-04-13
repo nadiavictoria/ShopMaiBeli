@@ -18,7 +18,7 @@ python -c "import transformers, peft, trl, datasets, accelerate; print('training
 mkdir -p models/checkpoints
 
 python models/train.py \
-  --data_dir data/workflows \
+  --data_dir data/workflows/train.jsonl \
   --output_dir models/checkpoints/shopmaibeli-sft \
   --epochs 3 \
   --strict_validation \

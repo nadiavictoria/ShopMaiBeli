@@ -220,9 +220,12 @@ def _call_sft_model(user_query: str) -> dict:
             {"role": "user", "content": f"User wants to: {user_query}"},
         ],
         temperature=0.1,
-        max_tokens=2048,
+        max_tokens=768,
     )
     raw = response.choices[0].message.content
+    logger.info("[_call_sft_model] raw response length=%s", len(raw) if raw else 0)
+    if raw:
+        logger.info("[_call_sft_model] raw response preview=%r", raw[:400])
     return _extract_json(raw)
 
 

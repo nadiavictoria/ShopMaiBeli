@@ -23,7 +23,7 @@ Instead of returning a simple list of items, the system:
 | Workflow Generation | ✅ Complete | LLM-based (SFT → DeepSeek → fallback) |
 | SFT Training Script | ✅ Complete | `models/train.py` — LoRA on Qwen2.5-3B-Instruct |
 | SFT Serving Script | ✅ Complete | `models/serve.py` — vLLM OpenAI-compatible server |
-| Training Data | ✅ Complete | `data/workflows/train.jsonl` — 10 curated examples |
+| Training Data | ✅ Complete | `data/workflows/train.jsonl` — curated workflow dataset |
 | SFT Model (trained) | 🚧 Pending | Needs Vast.ai GPU run (`models/train.py`) |
 
 ---
@@ -80,17 +80,65 @@ The system will:
 
 ---
 
-## SFT Model Training (Vast.ai)
+## SFT Model Training (GPU Cluster / Vast.ai)
+
+From a fresh clone on the GPU machine:
 
 ```bash
-# Train (run on a GPU instance, e.g. RTX 5080 on Vast.ai)
-python models/train.py
+# Go into the repo
+cd ~/ShopMaiBeli
+
+# Create and activate the cluster venv
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# Install CUDA-compatible PyTorch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Install training dependencies
+python -m pip install transformers peft trl datasets accelerate bitsandbytes sentencepiece
+
+# Verify GPU access
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no gpu')"
+
+# Train on the curated dataset only
+python models/train.py \
+  --data_dir data/workflows/train.jsonl \
+  --output_dir models/checkpoints/shopmaibeli-sft \
+  --epochs 3 \
+  --strict_validation \
+  --seed 42
 
 # Serve the trained adapter
 python models/serve.py --adapter_path models/checkpoints/shopmaibeli-sft --port 8001
 
 # Point the backend to the SFT model
-echo "SFT_MODEL_URL=http://localhost:8001/v1" >> backend/.env
+echo "SFT_MODEL_URL=http://localhost:8001" >> backend/.env
+```
+
+`models/train.py` now validates each training example's workflow JSON against the
+current generator schema before training starts and writes
+`training_metadata.json` into the checkpoint directory so retraining runs are
+traceable.
+
+Important notes:
+
+- The training job should point to `data/workflows/train.jsonl`, not the whole `data/workflows/` directory.
+- The directory contains multiple `.jsonl` files, and using the directory would mix in older datasets unintentionally.
+- Training order is shuffled by the trainer during training, so the physical line order in `train.jsonl` does not control epoch order.
+
+If you are using Slurm, submit the checked-in [train_sft.slurm](train_sft.slurm):
+
+```bash
+sbatch train_sft.slurm
+```
+
+Then monitor it with:
+
+```bash
+squeue -u $USER
+tail -f train-<jobid>.log
 ```
 
 The workflow generator will automatically use the SFT model when `SFT_MODEL_URL` is set, falling back to DeepSeek API otherwise.
