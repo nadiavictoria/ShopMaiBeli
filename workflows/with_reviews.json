@@ -28,7 +28,7 @@
       "typeVersion": 1.0,
       "position": [480, 0],
       "parameters": {
-        "mode": "simple"
+        "mode": "rag"
       }
     }
   ],

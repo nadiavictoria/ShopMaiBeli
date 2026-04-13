@@ -23,15 +23,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "prompts", "workflow_gen.txt")
+_SFT_PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "prompts", "workflow_gen_sft.txt")
 _FALLBACK_WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "example_shopping.json")
 
 
-def _load_system_prompt() -> str:
+def _load_system_prompt(path: str = _PROMPT_PATH) -> str:
     try:
-        with open(_PROMPT_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        logger.warning("workflow_gen.txt not found, using minimal prompt")
+        logger.warning("%s not found, using minimal prompt", os.path.basename(path))
         return (
             "You are a workflow generator. Given a shopping query, output a valid "
             "n8n Workflow JSON object. Output ONLY JSON — no markdown, no explanation."
@@ -212,12 +213,12 @@ def _call_sft_model(user_query: str) -> dict:
     base_url = os.environ["SFT_MODEL_URL"].rstrip("/") + "/v1"
     client = OpenAI(api_key="EMPTY", base_url=base_url)
 
-    system_prompt = _load_system_prompt()
+    system_prompt = _load_system_prompt(_SFT_PROMPT_PATH)
     response = client.chat.completions.create(
         model="shopmaibeli-sft",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"User wants to: {user_query}"},
+            {"role": "user", "content": user_query},
         ],
         temperature=0.1,
         max_tokens=768,
@@ -241,7 +242,7 @@ def _call_deepseek_fallback(user_query: str) -> dict:
         base_url="https://api.deepseek.com/v1",
     )
 
-    system_prompt = _load_system_prompt()
+    system_prompt = _load_system_prompt(_PROMPT_PATH)
     response = client.chat.completions.create(
         model="deepseek-chat",
         messages=[

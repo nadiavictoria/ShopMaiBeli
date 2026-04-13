@@ -31,6 +31,11 @@ def parse_args():
                         help="Training JSONL file or directory containing training JSONL files")
     parser.add_argument("--output_dir", default="models/checkpoints/shopmaibeli-sft",
                         help="Where to save the LoRA adapter")
+    parser.add_argument(
+        "--prompt_file",
+        default="models/prompts/workflow_gen_sft.txt",
+        help="Lean system prompt file used for SFT training",
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -141,11 +146,12 @@ def load_training_examples(data_dir: str, strict_validation: bool = False) -> li
 
 def format_prompt(instruction: str, output: str, system_prompt: str) -> str:
     """Format a single training example as a chat-style prompt."""
-    return (
-        f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-        f"<|im_start|>user\nUser wants to: {instruction}<|im_end|>\n"
-        f"<|im_start|>assistant\n{output}<|im_end|>"
-    )
+    parts = []
+    if system_prompt.strip():
+        parts.append(f"<|im_start|>system\n{system_prompt.strip()}<|im_end|>")
+    parts.append(f"<|im_start|>user\n{instruction.strip()}<|im_end|>")
+    parts.append(f"<|im_start|>assistant\n{output}<|im_end|>")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +177,9 @@ def train(args):
         torch.cuda.manual_seed_all(args.seed)
 
     # Load system prompt
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "workflow_gen.txt")
+    prompt_path = args.prompt_file
+    if not os.path.isabs(prompt_path):
+        prompt_path = os.path.join(os.path.dirname(__file__), "..", prompt_path)
     with open(prompt_path, "r", encoding="utf-8") as f:
         system_prompt = f.read()
 
@@ -258,6 +266,7 @@ def train(args):
         "lora_alpha": args.lora_alpha,
         "seed": args.seed,
         "num_examples": len(dataset),
+        "prompt_file": args.prompt_file,
     }
     with open(os.path.join(args.output_dir, "training_metadata.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)

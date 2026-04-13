@@ -156,6 +156,29 @@ async def test_product_search_notification():
     assert notif.session_id == "test"
 
 
+@pytest.mark.asyncio
+async def test_product_search_mock_fallbacks_to_all_products_on_unknown_query():
+    executor = ProductSearchExecutor(
+        make_node("productSearch", {"source": "mock", "maxResults": 3}),
+        workflow=None,
+    )
+    output = await executor.execute(make_input({"chatInput": "totally unknown product"}), make_context())
+    assert len(output.first_json["products"]) == 3
+
+
+def test_product_search_builds_broader_dummyjson_queries():
+    executor = ProductSearchExecutor(make_node("productSearch"), workflow=None)
+    queries = executor._build_dummyjson_queries("i'd like usb charger multi port", "USB charger")
+    assert "usb charger" in queries
+    assert "charger" in queries
+
+
+def test_product_search_local_review_corpus_match():
+    executor = ProductSearchExecutor(make_node("productSearch"), workflow=None)
+    products = executor._search_local_review_corpus("usb charger multi port", max_results=5)
+    assert isinstance(products, list)
+
+
 # ---------------------------------------------------------------------------
 # ProductSearch — live API (integration, requires network)
 # ---------------------------------------------------------------------------
@@ -316,3 +339,84 @@ async def test_review_analyzer_notification():
     assert notif is not None
     assert notif.notification_type == "step"
     assert "1" in notif.message
+
+
+@pytest.mark.asyncio
+async def test_review_analyzer_rag_uses_local_dataset(tmp_path):
+    dataset_path = tmp_path / "reviews.json"
+    dataset_path.write_text(
+        """
+[
+  {
+    "parent_asin": "A1",
+    "product_name": "Wireless Earbuds Pro",
+    "review_text": "Comfortable fit, strong battery life, and clear sound quality.",
+    "rating": 4.8,
+    "source": "Amazon_Fashion"
+  },
+  {
+    "parent_asin": "A2",
+    "product_name": "Wireless Earbuds Pro",
+    "review_text": "Easy Bluetooth pairing and reliable audio for commuting.",
+    "rating": 4.4,
+    "source": "Amazon_Fashion"
+  }
+]
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    mock_products = [
+        {
+            "name": "Wireless Earbuds Pro",
+            "price": 59.99,
+            "rating": 2.5,
+            "description": "Bluetooth earbuds with charging case",
+            "category": "audio",
+        }
+    ]
+    executor = ReviewAnalyzerExecutor(
+        make_node("reviewAnalyzer", {"mode": "rag", "datasetPath": str(dataset_path)}),
+        workflow=None,
+    )
+
+    output = await executor.execute(make_input({"products": mock_products}), make_context())
+    product = output.first_json["products"][0]
+
+    assert product["review_source"] == "rag"
+    assert product["review_sentiment"] == "positive"
+    assert "Matched 2 similar review(s)" in product["review_summary"]
+    assert len(product["review_matches"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_review_analyzer_rag_falls_back_when_no_match(tmp_path):
+    dataset_path = tmp_path / "reviews.json"
+    dataset_path.write_text(
+        """
+[
+  {
+    "parent_asin": "A1",
+    "product_name": "Winter Jacket",
+    "review_text": "Warm lining and sturdy zipper.",
+    "rating": 4.0,
+    "source": "Amazon_Fashion"
+  }
+]
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    mock_products = [
+        {"name": "Gaming Mouse", "price": 39.99, "rating": 2.0, "description": "RGB mouse"}
+    ]
+    executor = ReviewAnalyzerExecutor(
+        make_node("reviewAnalyzer", {"mode": "rag", "datasetPath": str(dataset_path)}),
+        workflow=None,
+    )
+
+    output = await executor.execute(make_input({"products": mock_products}), make_context())
+    product = output.first_json["products"][0]
+
+    assert product["review_source"] == "simple_fallback"
+    assert product["review_sentiment"] == "negative"

@@ -1,0 +1,3 @@
+Return exactly one valid n8n workflow JSON object for the user's shopping request.
+Do not add explanations, markdown, or any text before or after the JSON.
+Use the ShopMaiBeli workflow schema with chatTrigger first and convertToFile last.

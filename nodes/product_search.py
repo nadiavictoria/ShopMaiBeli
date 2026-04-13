@@ -9,6 +9,7 @@ Supports three backends:
 
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from urllib.parse import quote
@@ -61,7 +62,30 @@ _DUMMYJSON_CATEGORY_MAP = {
     "electronics": "laptops",
     "headphones": "mobile-accessories",
     "earbuds": "mobile-accessories",
+    "charger": "mobile-accessories",
+    "chargers": "mobile-accessories",
+    "usb charger": "mobile-accessories",
+    "multi port charger": "mobile-accessories",
+    "charging adapter": "mobile-accessories",
+    "power bank": "mobile-accessories",
+    "mouse": "laptops",
+    "gaming mouse": "laptops",
+    "keyboard": "laptops",
+    "mechanical keyboard": "laptops",
+    "webcam": "laptops",
 }
+
+_GENERIC_QUERY_WORDS = {
+    "best", "find", "show", "need", "want", "recommend", "give", "compare",
+    "help", "looking", "for", "with", "under", "below", "around", "good",
+    "great", "cheap", "affordable", "strong", "reviews", "review", "few",
+    "that", "fits", "fit", "can", "buy", "please", "multi", "port",
+}
+
+_LOCAL_REVIEW_DATASETS = (
+    os.path.join(os.path.dirname(__file__), "..", "output", "full_amazon_fashion_review.json"),
+    os.path.join(os.path.dirname(__file__), "..", "output", "amazon_reviews_sample.json"),
+)
 
 
 class ProductSearchExecutor(BaseNodeExecutor):
@@ -165,6 +189,11 @@ class ProductSearchExecutor(BaseNodeExecutor):
             else:
                 products = self._get_mock_products(query, max_results)
 
+            if products:
+                product_source = products[0].get("source")
+                if product_source and product_source != source:
+                    source = product_source
+
             logger.info(f"[{self.node.name}] found {len(products)} products from {source!r}")
 
         except Exception as exc:
@@ -226,28 +255,86 @@ class ProductSearchExecutor(BaseNodeExecutor):
         Maps common product terms to DummyJSON category slugs.
         Falls back to keyword search, then general listing.
         """
-        # Try to resolve a DummyJSON category slug from query or category
-        slug = None
-        for term in [category, query]:
-            if term:
-                slug = _DUMMYJSON_CATEGORY_MAP.get(term.lower().strip())
-                if slug:
-                    break
-
-        if slug:
-            url = f"https://dummyjson.com/products/category/{slug}?limit={max_results}"
-        elif query:
-            url = f"https://dummyjson.com/products/search?q={quote(query)}&limit={max_results}"
-        elif category:
-            url = f"https://dummyjson.com/products/category/{category}?limit={max_results}"
-        else:
-            url = f"https://dummyjson.com/products?limit={max_results}"
-
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+            tried_urls = []
 
+            slug = self._resolve_dummyjson_slug(category, query)
+            if slug:
+                products = await self._dummyjson_request(
+                    client,
+                    f"https://dummyjson.com/products/category/{slug}?limit={max_results}",
+                )
+                tried_urls.append(f"category:{slug}")
+                if products:
+                    return products
+
+            for search_query in self._build_dummyjson_queries(query, category):
+                products = await self._dummyjson_request(
+                    client,
+                    f"https://dummyjson.com/products/search?q={quote(search_query)}&limit={max_results}",
+                )
+                tried_urls.append(f"search:{search_query}")
+                if products:
+                    return products
+
+            logger.info("[%s] DummyJSON returned no products after %s", self.node.name, tried_urls)
+
+        local_products = self._search_local_review_corpus(query or category or "", max_results)
+        if local_products:
+            return local_products
+
+        return []
+
+    def _resolve_dummyjson_slug(self, category: Optional[str], query: str) -> Optional[str]:
+        for term in [category, query]:
+            if not term:
+                continue
+            normalized = term.lower().strip()
+            if normalized in _DUMMYJSON_CATEGORY_MAP:
+                return _DUMMYJSON_CATEGORY_MAP[normalized]
+
+            tokens = normalized.split()
+            for size in range(len(tokens), 0, -1):
+                for start in range(0, len(tokens) - size + 1):
+                    phrase = " ".join(tokens[start:start + size])
+                    if phrase in _DUMMYJSON_CATEGORY_MAP:
+                        return _DUMMYJSON_CATEGORY_MAP[phrase]
+        return None
+
+    def _build_dummyjson_queries(self, query: str, category: Optional[str]) -> List[str]:
+        candidates: List[str] = []
+        for raw in [query, category]:
+            if not raw:
+                continue
+            cleaned = raw.strip()
+            if cleaned and cleaned not in candidates:
+                candidates.append(cleaned)
+
+            tokens = [
+                token for token in re.findall(r"[a-z0-9]+", cleaned.lower())
+                if token not in _GENERIC_QUERY_WORDS
+            ]
+            if tokens:
+                compact = " ".join(tokens)
+                if compact not in candidates:
+                    candidates.append(compact)
+                if len(tokens) > 1:
+                    head = " ".join(tokens[:2])
+                    if head not in candidates:
+                        candidates.append(head)
+                for token in tokens:
+                    if token not in candidates:
+                        candidates.append(token)
+        return candidates
+
+    async def _dummyjson_request(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+    ) -> List[Dict[str, Any]]:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
         return [
             {
                 "name": p["title"],
@@ -259,6 +346,61 @@ class ProductSearchExecutor(BaseNodeExecutor):
             }
             for p in data.get("products", [])
         ]
+
+    def _search_local_review_corpus(
+        self,
+        query: str,
+        max_results: int,
+    ) -> List[Dict[str, Any]]:
+        query_tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+        query_tokens = {token for token in query_tokens if token not in _GENERIC_QUERY_WORDS}
+        if not query_tokens:
+            return []
+
+        scored: List[tuple[int, Dict[str, Any]]] = []
+        seen_names = set()
+        for dataset_path in _LOCAL_REVIEW_DATASETS:
+            try:
+                with open(dataset_path, "r", encoding="utf-8") as handle:
+                    rows = json.load(handle)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning("[%s] failed loading local review dataset %s: %s", self.node.name, dataset_path, exc)
+                continue
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                product_name = str(row.get("product_name", "")).strip()
+                review_text = str(row.get("review_text", "")).strip()
+                if not product_name:
+                    continue
+
+                haystack_tokens = set(re.findall(r"[a-z0-9]+", f"{product_name} {review_text}".lower()))
+                overlap = query_tokens & haystack_tokens
+                if not overlap:
+                    continue
+
+                dedupe_key = product_name.lower()
+                if dedupe_key in seen_names:
+                    continue
+                seen_names.add(dedupe_key)
+
+                scored.append((
+                    len(overlap),
+                    {
+                        "name": product_name,
+                        "price": 0.0,
+                        "rating": float(row.get("rating", 0) or 0),
+                        "description": review_text[:220],
+                        "category": row.get("source", "amazon-local"),
+                        "source": "amazon-local",
+                    },
+                ))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [product for _score, product in scored[:max_results]]
 
     def _get_mock_products(
         self,
