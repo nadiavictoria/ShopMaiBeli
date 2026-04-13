@@ -24,8 +24,25 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.workflow_generator import validate_workflow
+
+ALLOWED_NODE_TYPES = {
+    "@n8n/n8n-nodes-langchain.chatTrigger",
+    "@n8n/n8n-nodes-langchain.agent",
+    "shopmaibeli.productSearch",
+    "shopmaibeli.reviewAnalyzer",
+    "n8n-nodes-base.convertToFile",
+    "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+}
+
+ALLOWED_CONNECTION_TYPES = {"main", "ai_languageModel"}
 
 DEFAULT_QUERIES = [
     "find me a gaming mouse under $60 with strong reviews",
@@ -100,11 +117,31 @@ def analyze_raw_output(query: str, raw: str) -> dict:
 
     parsed_ok = False
     parse_error = None
+    workflow_valid = False
+    validation_errors = None
+    disallowed_node_types = []
+    disallowed_connection_types = []
+
     if contains_json_object:
         candidate = stripped[start : end + 1]
         try:
-            json.loads(candidate)
+            parsed = json.loads(candidate)
             parsed_ok = True
+            if isinstance(parsed, dict):
+                validation_errors = validate_workflow(parsed)
+                workflow_valid = not validation_errors
+                disallowed_node_types = sorted({
+                    node.get("type", "")
+                    for node in parsed.get("nodes", [])
+                    if node.get("type", "") not in ALLOWED_NODE_TYPES
+                })
+                disallowed_connection_types = sorted({
+                    conn_type
+                    for conns in parsed.get("connections", {}).values()
+                    if isinstance(conns, dict)
+                    for conn_type in conns
+                    if conn_type not in ALLOWED_CONNECTION_TYPES
+                })
         except json.JSONDecodeError as exc:
             parse_error = str(exc)
 
@@ -120,6 +157,10 @@ def analyze_raw_output(query: str, raw: str) -> dict:
         "trailing_text": trailing,
         "parsed_ok": parsed_ok,
         "parse_error": parse_error,
+        "workflow_valid": workflow_valid,
+        "validation_errors": validation_errors,
+        "disallowed_node_types": disallowed_node_types,
+        "disallowed_connection_types": disallowed_connection_types,
     }
 
 
@@ -164,6 +205,7 @@ def main() -> None:
         "contains_markdown_fence",
         "contains_explanatory_prefix",
         "parsed_ok",
+        "workflow_valid",
     ):
         count = sum(1 for item in results if item[key])
         print(f"  {key}: {count}/{len(results)}")
@@ -189,6 +231,12 @@ def main() -> None:
             print(f"    trailing_text={item['trailing_text'][:120]!r}")
         if item["parse_error"]:
             print(f"    parse_error={item['parse_error']}")
+        if item.get("validation_errors"):
+            print(f"    validation_errors={item['validation_errors'][:3]}")
+        if item.get("disallowed_node_types"):
+            print(f"    disallowed_node_types={item['disallowed_node_types']}")
+        if item.get("disallowed_connection_types"):
+            print(f"    disallowed_connection_types={item['disallowed_connection_types']}")
 
 
 if __name__ == "__main__":
