@@ -43,14 +43,17 @@ app.add_middleware(
 )
 
 
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8888")
+
+
 @app.post("/get_workflow")
 async def get_workflow(payload: dict = Body(default={})):
     """
-    Return HTML with n8n-demo visualization of the n8n workflow.
+    Return HTML with editable n8n-style graph visualization of the workflow.
     """
     try:
         workflow = generate_workflow(payload)
-        html = build_n8n_demo_html(workflow)
+        html = build_n8n_demo_html(workflow, backend_url=BACKEND_URL)
         return {
             "type": "message",
             "name": "Workflow Preview",
@@ -71,14 +74,23 @@ logger = logging.getLogger(__name__)
 
 @app.post("/run_workflow")
 async def run_workflow(payload: dict = Body(default={})):
-    """Generate a workflow from the user query, then run it and stream NDJSON results."""
+    """Execute a workflow and stream NDJSON results.
+
+    If payload contains a 'workflow' key, that workflow JSON is used directly
+    (e.g. submitted from the editable graph editor). Otherwise a new workflow
+    is generated from the user query via the SFT/DeepSeek/fallback chain.
+    """
     session_id = payload.get("session_id", "default")
     chat_history = payload.get("chat_history", [])
     files = payload.get("files", [])
 
     logger.info(f"[run_workflow] session_id={session_id}, files={len(files)}")
 
-    workflow = generate_workflow(payload)
+    if "workflow" in payload and payload["workflow"]:
+        workflow = payload["workflow"]
+        logger.info("[run_workflow] using pre-built workflow from payload")
+    else:
+        workflow = generate_workflow(payload)
     executor = WorkflowExecutor.from_json(workflow)
 
     async def stream():
