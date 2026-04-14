@@ -7,62 +7,44 @@ import json
 
 def build_n8n_demo_html(workflow: dict) -> str:
     """
-    Build markdown-style text representation of the workflow structure.
-
-    This is displayed as plain text in Chainlit (no HTML rendering needed).
+    Build a full HTML page embedding the n8n-demo web component to visualize
+    the workflow as an interactive graph.
 
     Args:
         workflow: The n8n workflow JSON object
 
     Returns:
-        Markdown-formatted string with workflow visualization
+        Full HTML document string for rendering in an iframe
     """
-    workflow_name = workflow.get("name", "Unnamed Workflow")
-    nodes = workflow.get("nodes", [])
-    connections = workflow.get("connections", {})
+    # Serialize workflow JSON — single-quoted HTML attribute, so no escaping needed
+    # (JSON strings use double quotes; single quotes never appear in valid JSON)
+    workflow_json = json.dumps(workflow, ensure_ascii=False)
+    # Escape any single quotes that may appear in string values
+    workflow_json_escaped = workflow_json.replace("'", "&#39;")
 
-    # Count connections
-    connection_count = 0
-    for source, types in connections.items():
-        for conn_type, outputs in types.items():
-            for output_list in outputs:
-                connection_count += len(output_list)
-
-    # Build markdown
-    markdown = f"""# ⚡ {workflow_name}
-
-**Workflow Execution Pipeline**
-
----
-
-## 📊 Summary
-- **Nodes:** {len(nodes)}
-- **Connections:** {connection_count}
-
----
-
-## 📦 Nodes
-
-"""
-
-    for node in nodes:
-        node_name = node.get("name", "Unknown")
-        node_type = node.get("type", "").split(".")[-1]
-        markdown += f"- **{node_name}** `{node_type}`\n"
-
-    markdown += "\n---\n\n## 🔗 Connections\n\n"
-
-    # Build connections list
-    has_connections = False
-    for source, types in connections.items():
-        for conn_type, outputs in types.items():
-            for output_list in outputs:
-                for conn in output_list:
-                    target = conn.get("node", "Unknown")
-                    markdown += f"- {source} → **{target}**\n"
-                    has_connections = True
-
-    if not has_connections:
-        markdown += "- *(No connections)*\n"
-
-    return markdown
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{workflow.get('name', 'Workflow Preview')}</title>
+  <script src="https://cdn.jsdelivr.net/npm/@webcomponents/webcomponentsjs@2.0.0/webcomponents-loader.js"></script>
+  <script src="https://www.unpkg.com/lit@2.0.0-rc.2/polyfill-support.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@n8n_io/n8n-demo-component/n8n-demo.bundled.js"></script>
+  <style>
+    html, body {{ height: 100%; margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; }}
+    .container {{ height: 100%; padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }}
+    .header {{ font-size: 14px; font-weight: 600; color: #333; padding: 4px 0; }}
+    .panel {{ flex: 1; border: 1px solid #ddd; border-radius: 8px; background: #fff; overflow: hidden; }}
+    n8n-demo {{ width: 100%; height: 100%; display: block; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">⚡ {workflow.get('name', 'Workflow Preview')}</div>
+    <div class="panel">
+      <n8n-demo workflow='{workflow_json_escaped}'></n8n-demo>
+    </div>
+  </div>
+</body>
+</html>"""
