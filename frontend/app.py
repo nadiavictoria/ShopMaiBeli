@@ -73,14 +73,14 @@ async def on_chat_start():
         {
             "id": "get_workflow",
             "icon": "hammer",
-            "description": "POST {base_url}/get_workflow",
-            "persistent": True,
+            "description": "Generate & open the editable workflow graph",
+            "persistent": False,
         },
         {
             "id": "run_workflow",
             "icon": "play",
-            "description": "POST {base_url}/run_workflow (streaming)",
-            "persistent": True,
+            "description": "Run workflow and stream results (streaming)",
+            "persistent": False,
         },
     ]
     await cl.context.emitter.set_commands(commands)
@@ -178,7 +178,7 @@ async def _handle_single_response(url: str, files: list = None):
     session_id = _get_session_id()
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(url, json={
                 "session_id": session_id,
                 "chat_history": chat_history,

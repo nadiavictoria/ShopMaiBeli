@@ -10,7 +10,7 @@ import logging
 import os
 from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 
 # Load environment variables — check backend/.env then project root .env
@@ -45,20 +45,27 @@ app.add_middleware(
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8888")
 
+# In-memory cache: session_id -> generated workflow HTML
+_editor_cache: dict = {}
+
 
 @app.post("/get_workflow")
 async def get_workflow(payload: dict = Body(default={})):
-    """
-    Return HTML with editable n8n-style graph visualization of the workflow.
-    """
+    """Generate a workflow and return a link to the editable graph editor."""
     try:
+        session_id = payload.get("session_id", "default")
         workflow = generate_workflow(payload)
         html = build_n8n_demo_html(workflow, backend_url=BACKEND_URL)
+        _editor_cache[session_id] = html
+        editor_url = f"{BACKEND_URL}/workflow_editor/{session_id}"
         return {
             "type": "message",
             "name": "Workflow Preview",
-            "text": f"Successfully built workflow: **{workflow.get('name', 'Unknown')}**",
-            "html": html,
+            "text": (
+                f"Workflow **{workflow.get('name', 'Unknown')}** generated.\n\n"
+                f"[Open Editor →]({editor_url})"
+            ),
+            "html": "",
         }
     except Exception as e:
         return {
@@ -67,6 +74,15 @@ async def get_workflow(payload: dict = Body(default={})):
             "text": f"Unexpected error: {e}",
             "html": "",
         }
+
+
+@app.get("/workflow_editor/{session_id}", response_class=HTMLResponse)
+async def workflow_editor(session_id: str):
+    """Serve the editable workflow graph editor for the given session."""
+    html = _editor_cache.get(session_id)
+    if not html:
+        return HTMLResponse("<h2>No workflow found for this session. Run /get_workflow first.</h2>", status_code=404)
+    return HTMLResponse(html)
 
 
 logger = logging.getLogger(__name__)
