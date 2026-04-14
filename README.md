@@ -3,9 +3,9 @@
 ShopMaiBeli is an **agentic AI system** that transforms natural language shopping requests into executable workflow graphs, runs them against live product APIs, and returns ranked comparison results.
 
 Instead of returning a simple list of items, the system:
-- generates a **workflow graph (DAG)** from a natural language query,
+- generates a **workflow graph (DAG)** of actions,
 - executes it with **parallel processing and failure recovery**, and
-- returns a **structured Markdown comparison report** with review sentiment.
+- returns **structured product results with review analysis**.
 
 ---
 
@@ -13,55 +13,43 @@ Instead of returning a simple list of items, the system:
 
 | Component | Status | Notes |
 |---|---|---|
+| Project Migration | ✅ Complete | Flat structure: `backend/`, `frontend/`, `workflow_engine/`, `nodes/` |
 | Execution Engine | ✅ Complete | Parallel execution, retry logic, streaming NDJSON |
-| ProductSearch Node | ✅ Complete | DummyJSON, FakeStoreAPI, mock, plus local `amazon-local` fallback from review corpora |
-| ReviewAnalyzer Node | ✅ Complete | Default `rag` mode uses local review JSON corpora; falls back to simple rating-based analysis |
-| Agent Node | ✅ Complete | DeepSeek LLM via OpenAI-compatible API |
-| ConvertToFile Node | ✅ Complete | Outputs Markdown files and final report payloads |
-| Frontend (Chainlit) | ✅ Running | Chat UI with streaming steps and HTML preview rendered separately from step text |
+| ProductSearch Node | ✅ Complete | Mock, FakeStoreAPI, DummyJSON backends |
+| ReviewAnalyzer Node | ✅ Complete | Simple sentiment mode, RAG placeholder |
+| Test Suite | ✅ Complete | 39 tests passing |
+| Example Workflows | ✅ Complete | `example_shopping.json`, `with_reviews.json` |
+| Frontend (Chainlit) | ✅ Running | Chat UI with streaming step display |
 | Backend (FastAPI) | ✅ Running | `/health`, `/get_workflow`, `/run_workflow` |
-| Workflow Generation | ✅ Complete | SFT-first generation with DeepSeek fallback and final hardcoded fallback |
-| SFT Training Script | ✅ Complete | `models/train.py` — LoRA on Qwen2.5-3B-Instruct with a lean schema-anchored prompt |
-| SFT Serving Script | ✅ Complete | `models/serve.py` — vLLM OpenAI-compatible server with `max_lora_rank=64` |
-| Training Data | ✅ Complete | `data/workflows/train.jsonl` — curated workflow dataset |
-| SFT Model (trained) | ✅ Complete | `shopmaibeli-sft-v3` checkpoint available as an external artifact |
+| Workflow Generation | 🚧 Placeholder | Returns hardcoded `example_shopping.json` — LLM integration pending (Point 3) |
+| SFT Model | 🚧 Pending | Qwen-2.5 3B LoRA — not yet integrated |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- Python 3.12+
-- DeepSeek API key (or any OpenAI-compatible LLM key)
-
-### Artifacts
-
-Large artifacts are intentionally kept out of GitHub. See [docs/ARTIFACTS.md](docs/ARTIFACTS.md) for:
-
-- what to upload to Google Drive
-- where to place downloaded checkpoints locally
-- where to place downloaded local review datasets
-- how to run the app with or without the trained SFT adapter
+- Python 3.13+
+- Virtual environment (recommended)
 
 ### 1. Clone and Set Up
 
 ```bash
 git clone <repo-url>
 cd ShopMaiBeli
-python3.12 -m venv .venv
-source .venv/bin/activate
+
+# Create and activate virtual environment
+python -m venv my-venv
+source my-venv/bin/activate   # Windows: my-venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Key
+### 2. Start the Application
 
 ```bash
-echo "DEEPSEEK_API_KEY=your-key-here" > backend/.env
-```
-
-### 3. Start the Application
-
-```bash
+# From the project root
 ./start.sh
 ```
 
@@ -69,21 +57,21 @@ This launches:
 - **Backend** on http://localhost:8888 (FastAPI)
 - **Frontend** on http://localhost:8000 (Chainlit)
 
-### 4. Use the Chat Interface
+### 3. Open the Chat Interface
 
-Visit **http://localhost:8000**, then:
-1. In the chat input, type `/` and select **`run_workflow`**
-2. Type your shopping query and send, e.g.:
-   ```
-   find me the best wireless earbuds under $100
-   ```
+Visit **http://localhost:8000** in your browser.
+
+Send a message like:
+```
+find earbuds
+```
 
 The system will:
-1. Generate a workflow JSON via the served SFT model when `SFT_MODEL_URL` is set, otherwise fall back to DeepSeek
-2. Execute: ChatTrigger → QueryAnalyzer → ProductSearch → ReviewAnalyzer → ReportGenerator → ConvertToFile
-3. Stream step-by-step progress and return a ranked Markdown comparison report
+1. Load the example shopping workflow
+2. Run ProductSearch using mock data
+3. Stream results back step by step
 
-### 5. Stop the Application
+### 4. Stop the Application
 
 ```bash
 ./stop.sh
@@ -91,140 +79,20 @@ The system will:
 
 ---
 
-## SFT Model Training (GPU Cluster / Vast.ai)
-
-From a fresh clone on the GPU machine:
-
-```bash
-# Go into the repo
-cd ~/ShopMaiBeli
-
-# Create and activate the cluster venv
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-
-# Install CUDA-compatible PyTorch
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-
-# Install training dependencies
-python -m pip install transformers peft trl datasets accelerate bitsandbytes sentencepiece
-
-# Verify GPU access
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no gpu')"
-
-# Train on the curated dataset only
-python models/train.py \
-  --data_dir data/workflows/train.jsonl \
-  --output_dir models/checkpoints/shopmaibeli-sft \
-  --epochs 3 \
-  --strict_validation \
-  --seed 42
-
-# Serve the trained adapter
-python models/serve.py --adapter_path models/checkpoints/shopmaibeli-sft --port 8001
-
-# Point the backend to the SFT model
-echo "SFT_MODEL_URL=http://localhost:8001" >> backend/.env
-```
-
-`models/train.py` now validates each training example's workflow JSON against the
-current generator schema before training starts and writes
-`training_metadata.json` into the checkpoint directory so retraining runs are
-traceable.
-
-Important notes:
-
-- The training job should point to `data/workflows/train.jsonl`, not the whole `data/workflows/` directory.
-- The directory contains multiple `.jsonl` files, and using the directory would mix in older datasets unintentionally.
-- Training order is shuffled by the trainer during training, so the physical line order in `train.jsonl` does not control epoch order.
-- The current SFT setup uses the lean prompt at `models/prompts/workflow_gen_sft.txt`.
-
-If you are using Slurm, submit the checked-in [train_sft.slurm](train_sft.slurm):
-
-```bash
-sbatch train_sft.slurm
-```
-
-Then monitor it with:
-
-```bash
-squeue -u $USER
-tail -f train-<jobid>.log
-```
-
-The workflow generator will automatically use the SFT model when `SFT_MODEL_URL` is set, falling back to DeepSeek API otherwise.
-
-## SFT Evaluation
-
-Held-out probing is built into [scripts/probe_sft_outputs.py](scripts/probe_sft_outputs.py).
-
-With the current `shopmaibeli-sft-v3` setup, the successful evaluation loop used:
-
-```bash
-python scripts/probe_sft_outputs.py \
-  --base-url http://localhost:8001 \
-  --model shopmaibeli-sft \
-  --max-tokens 1400 \
-  --output output/sft_probe_results_v3b.jsonl
-```
-
-The current SFT backend path also uses `max_tokens=1400` to avoid truncating
-valid workflow JSON responses.
-
-## Using The Trained Checkpoint
-
-If you downloaded the released adapter artifact from Google Drive into:
-
-```text
-artifacts/checkpoints/shopmaibeli-sft-v3/
-```
-
-serve it with:
-
-```bash
-python models/serve.py \
-  --adapter_path artifacts/checkpoints/shopmaibeli-sft-v3 \
-  --port 8001
-```
-
-Then set:
-
-```bash
-DEEPSEEK_API_KEY=your-key-here
-SFT_MODEL_URL=http://localhost:8001
-```
-
-in `backend/.env`, restart the app with `./stop.sh && ./start.sh`, and verify
-`[generate_workflow] SFT model succeeded` in `backend.log`.
-
-## Local Review Datasets
-
-The lightweight review-retrieval path expects these files in `output/`:
-
-- `output/amazon_reviews_sample.json`
-- `output/full_amazon_fashion_review.json`
-
-These dataset artifacts should be downloaded from Google Drive as described in
-[docs/ARTIFACTS.md](docs/ARTIFACTS.md).
-
-The current retrieval behavior is:
-
-- `ProductSearch` first tries live product APIs (`dummyjson` / `fakestoreapi`)
-- if `dummyjson` finds no products for some queries, it can fall back to local `amazon-local` results built from the review corpora
-- `ReviewAnalyzer(mode="rag")` then enriches returned products by matching them against the local review JSON files
-
----
-
 ## Running Tests
 
 ```bash
+# Activate your virtual environment first
+source my-venv/bin/activate
+
 # Run all non-integration tests (no network required)
 pytest tests/ -v -m "not integration"
 
 # Run integration tests (requires network)
 pytest tests/ -v -m integration
 ```
+
+Expected output: **39 tests passing** in ~2 seconds.
 
 ---
 
@@ -233,58 +101,59 @@ pytest tests/ -v -m integration
 ```
 ShopMaiBeli/
 ├── frontend/                   # Chainlit UI (port 8000)
-│   ├── app.py                  # Chat interface, command routing, NDJSON streaming
+│   ├── app.py                  # Main Chainlit application
+│   ├── chainlit.md             # Welcome page
 │   └── public/                 # Static assets
 │
 ├── backend/                    # FastAPI server (port 8888)
-│   ├── main.py                 # API endpoints (/health, /get_workflow, /run_workflow)
-│   ├── workflow_generator.py   # LLM-based workflow generation (SFT → DeepSeek → fallback)
+│   ├── main.py                 # API endpoints
 │   └── n8n_utils.py            # Workflow structure formatter
 │
 ├── workflow_engine/            # DAG execution logic
-│   ├── executor.py             # Parallel execution engine (asyncio.gather + retry)
-│   ├── workflow.py             # JSON parser + topological sort (Kahn's algorithm)
-│   ├── models.py               # NodeInput, NodeOutput, NodeData, NodeNotification
-│   └── context.py              # ExecutionContext (session state + data passing)
+│   ├── __init__.py             # Exports WorkflowExecutor
+│   ├── executor.py             # Parallel execution engine
+│   ├── workflow.py             # JSON parser + topological sort
+│   ├── models.py               # NodeInput, NodeOutput, etc.
+│   └── context.py              # ExecutionContext (session state)
 │
 ├── nodes/                      # Node executor implementations
-│   ├── product_search.py       # Fetches products from APIs with local amazon-local fallback
-│   ├── review_analyzer.py      # Review analysis; default rag mode uses local review JSON files
-│   ├── agent.py                # LLM agent node (DeepSeek via OpenAI API)
-│   ├── chat_trigger.py         # Entry point — extracts user query
-│   ├── convert_to_file.py      # Converts output to file (HTML/text)
-│   ├── lm_deepseek.py          # DeepSeek LLM sub-node
-│   ├── memory_buffer.py        # Conversation memory sub-node
-│   ├── output_parser.py        # Structured output parser sub-node
+│   ├── __init__.py             # Registry + get_executor_class()
+│   ├── base.py                 # BaseNodeExecutor (abstract)
+│   ├── product_search.py       # ProductSearch node ✅ NEW
+│   ├── review_analyzer.py      # ReviewAnalyzer node ✅ NEW
+│   ├── chat_trigger.py         # Entry point node
+│   ├── agent.py                # LLM agent node
+│   ├── convert_to_file.py      # HTML output node
+│   ├── lm_deepseek.py          # DeepSeek LLM sub-node (optional)
+│   ├── memory_buffer.py        # Memory sub-node
+│   ├── output_parser.py        # Output parser sub-node
 │   └── tool_code.py            # Python code tool sub-node
 │
-├── models/                     # ML model components
-│   ├── train.py                # LoRA SFT training script (Qwen2.5-3B-Instruct, PEFT/TRL)
-│   ├── serve.py                # vLLM serving wrapper (OpenAI-compatible)
-│   └── prompts/
-│       ├── workflow_gen.txt    # Rich prompt for DeepSeek fallback workflow generation
-│       └── workflow_gen_sft.txt# Lean schema-anchored prompt for SFT training/inference
-│
-├── data/
-│   └── workflows/
-│       └── train.jsonl         # SFT training examples (instruction → workflow JSON)
-│
 ├── workflows/                  # Workflow JSON definitions
-│   ├── example_shopping.json   # Full shopping workflow (fallback)
-│   ├── with_reviews.json       # Shopping + review analysis workflow
-│   └── NUS News ChatBot.json   # Original starter kit reference workflow
+│   ├── example_shopping.json   # Trigger → ProductSearch
+│   ├── with_reviews.json       # Trigger → ProductSearch → ReviewAnalyzer
+│   └── NUS News ChatBot.json   # Original starter kit workflow
 │
-├── tests/                      # Test suite
-│   ├── test_nodes.py           # Node unit tests
-│   ├── test_workflow.py        # Workflow integration tests
-│   ├── test_apis.py            # External API tests
-│   └── test_generation.py      # Workflow generation/validation tests
+├── tests/                      # Test suite (39 tests)
+│   ├── conftest.py             # Pytest async configuration
+│   ├── test_nodes.py           # Node unit tests (15 tests)
+│   ├── test_workflow.py        # Workflow integration tests (13 tests)
+│   ├── test_apis.py            # External API tests (7 tests)
+│   └── test_generation.py      # Workflow validation tests (11 tests)
 │
 ├── docs/                       # Documentation
-├── artifacts/                  # Local-only external artifacts (ignored by git)
+│   ├── architecture.md         # System architecture
+│   ├── implementation-plan.md  # Implementation progress
+│   ├── nodes.md                # Node specifications
+│   ├── testing.md              # Testing strategy
+│   ├── requirements.md         # Workflow generation specs
+│   └── claude-code-guide.md    # Development guide
+│
+├── pytest.ini                  # Pytest configuration
 ├── requirements.txt            # Python dependencies
-├── start.sh                    # Start all services
-└── stop.sh                     # Stop all services
+├── start.sh                    # Start all services from project root
+├── stop.sh                     # Stop all services
+└── DEMO_INSTRUCTIONS.md        # Step-by-step demo guide for teammates
 ```
 
 ---
@@ -294,31 +163,26 @@ ShopMaiBeli/
 ```
 User Query (Chainlit UI — port 8000)
          │
-         ▼  /run_workflow POST
+         ▼
   FastAPI Backend (port 8888)
-  └── WorkflowGenerator
-      ├── SFT model (vLLM, SFT_MODEL_URL env)   ← if trained + served
-      ├── DeepSeek API fallback (DEEPSEEK_API_KEY env)
-      └── example_shopping.json fallback
+  ├── POST /get_workflow  → loads workflow JSON + formats structure
+  └── POST /run_workflow  → executes + streams NDJSON results
          │
-         ▼  Workflow JSON
+         ▼
   WorkflowExecutor (workflow_engine/)
-  ├── Parse DAG from workflow JSON
+  ├── Parses DAG from workflow JSON
   ├── Topological sort (Kahn's algorithm)
-  ├── Group nodes into parallel execution levels
-  └── asyncio.gather() for independent nodes (+ retry on failure)
+  ├── Groups nodes into parallel execution levels
+  └── asyncio.gather() for concurrent nodes
          │
          ▼
   Node Executors (nodes/)
-  ├── ChatTrigger     → pass user query downstream
-  ├── Agent           → QueryAnalyzer: extract category/budget/priorities (DeepSeek sub-node)
-  ├── ProductSearch   → fetch products from DummyJSON / FakeStoreAPI, then local amazon-local fallback
-  ├── ReviewAnalyzer  → local review retrieval (`rag`) or simple fallback sentiment scoring
-  ├── Agent           → ReportGenerator: ranked Markdown comparison table (DeepSeek sub-node)
-  └── ConvertToFile   → package output as file
+  ├── ChatTrigger     → extracts user query from chat history
+  ├── ProductSearch   → fetches products (mock / fakestoreapi / dummyjson)
+  └── ReviewAnalyzer  → adds sentiment scores to products
          │
          ▼
-  Streaming NDJSON → frontend renders step-by-step progress + final report
+  Streaming NDJSON → frontend renders step-by-step progress
 ```
 
 ---
@@ -328,8 +192,8 @@ User Query (Chainlit UI — port 8000)
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Health check — returns `{"status": "ok"}` |
-| `/get_workflow` | POST | Generate and return workflow JSON for a query |
-| `/run_workflow` | POST | Generate + execute workflow, stream NDJSON results |
+| `/get_workflow` | POST | Returns workflow structure as markdown text |
+| `/run_workflow` | POST | Executes workflow, streams NDJSON results |
 
 ---
 
@@ -340,9 +204,12 @@ User Query (Chainlit UI — port 8000)
 | Frontend | Chainlit |
 | Backend | FastAPI + uvicorn |
 | Workflow Execution | asyncio (parallel DAG) |
-| Workflow Generation | DeepSeek API / SFT model (Qwen2.5-3B LoRA) |
-| SFT Training | PEFT + TRL (SFTTrainer) |
-| SFT Serving | vLLM (OpenAI-compatible) |
-| Product APIs | DummyJSON, FakeStoreAPI, mock, plus local amazon-local fallback |
-| Local Review Retrieval | JSON review corpora + lightweight token-overlap retrieval |
+| Product APIs | FakeStoreAPI, DummyJSON (+ mock) |
+| Node LLM | DeepSeek API (optional) |
 | Testing | pytest + pytest-asyncio |
+
+---
+
+## Next Steps (Point 3: Workflow Generation)
+
+The `generate_workflow()` function in `backend/main.py` currently returns a hardcoded `example_shopping.json`. The next implementation step replaces this with a model call that generates workflow JSON dynamically from a user query. See `docs/implementation-plan.md` for the full roadmap.
