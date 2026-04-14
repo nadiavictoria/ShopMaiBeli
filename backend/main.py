@@ -23,7 +23,7 @@ WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "exam
 
 from backend.n8n_utils import build_n8n_demo_html
 from backend.workflow_generator import generate_workflow
-from workflow_engine import WorkflowExecutor
+from workflow_engine import WorkflowExecutor, session_store
 
 # Configure logging
 logging.basicConfig(
@@ -90,6 +90,20 @@ async def run_workflow(payload: dict = Body(default={})):
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """List all active sessions with metadata (multi-tenancy observability)."""
+    session_store.evict_stale(max_age_seconds=3600)
+    return {"sessions": session_store.active_sessions()}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Evict a specific session from the store."""
+    session_store.delete(session_id)
+    return {"deleted": session_id}
 
 
 @app.get("/health")

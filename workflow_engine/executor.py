@@ -12,6 +12,7 @@ from typing import AsyncGenerator, Dict, List, Optional, Tuple
 from .models import NodeNotification, NodeOutput
 from .workflow import Workflow
 from .context import ExecutionContext
+from .session_store import session_store
 # get_executor_class imported lazily inside methods to avoid circular import
 
 logger = logging.getLogger(__name__)
@@ -99,8 +100,6 @@ class WorkflowExecutor:
 
     def __init__(self, workflow: Workflow):
         self.workflow = workflow
-        # Session contexts storage: session_id -> ExecutionContext
-        self._contexts: Dict[str, ExecutionContext] = {}
 
     @classmethod
     def from_json(cls, workflow_json: dict) -> "WorkflowExecutor":
@@ -115,16 +114,9 @@ class WorkflowExecutor:
             workflow_json = json.load(f)
         return cls.from_json(workflow_json)
 
-    def get_context(self, session_id: str) -> ExecutionContext:
-        """Get or create an ExecutionContext for the given session_id."""
-        if session_id not in self._contexts:
-            self._contexts[session_id] = ExecutionContext(session_id=session_id)
-        return self._contexts[session_id]
-
     def clear_context(self, session_id: str):
-        """Clear the ExecutionContext for the given session_id."""
-        if session_id in self._contexts:
-            del self._contexts[session_id]
+        """Remove the session from the global store."""
+        session_store.delete(session_id)
 
     @staticmethod
     def _get_executor_class(node_type: str):
@@ -292,10 +284,23 @@ class WorkflowExecutor:
         Yields:
             NodeNotification for each completed node, then a final summary.
         """
-        context = self.get_context(session_id)
+        # Acquire per-session lock — serializes concurrent requests from the same user.
+        # Different session_ids acquire different locks, so they run fully in parallel.
+        async with session_store.session_lock(session_id):
+            async for notification in self._execute_locked(session_id, chat_history, files):
+                yield notification
+
+    async def _execute_locked(
+        self,
+        session_id: str,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        files: Optional[List[Dict[str, any]]] = None,
+    ) -> AsyncGenerator[NodeNotification, None]:
+        """Inner execution — called while holding the per-session lock."""
+        context = await session_store.get_or_create(session_id)
         context.chat_history = chat_history or []
         context.files = files or []
-        context.node_outputs = {}
+        context.node_outputs = {}  # reset per-run outputs; memory persists
 
         execution_order = self.workflow.get_execution_order()
 

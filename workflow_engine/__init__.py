@@ -17,6 +17,7 @@ from .models import (
 from .workflow import Workflow
 from .context import ExecutionContext
 from .executor import WorkflowExecutor
+from .session_store import session_store, SessionStore
 
 __all__ = [
     "ConnectionType",
@@ -29,4 +30,6 @@ __all__ = [
     "Workflow",
     "ExecutionContext",
     "WorkflowExecutor",
+    "SessionStore",
+    "session_store",
 ]
