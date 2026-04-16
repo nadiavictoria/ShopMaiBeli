@@ -1,26 +1,34 @@
-# Demo Instructions — ShopMaiBeli
+# Demo Instructions
 
-This guide covers two demo modes:
+This guide matches the current code paths in `frontend/app.py`,
+`backend/main.py`, and `backend/workflow_generator.py`.
 
-- `Fallback demo`: fastest local setup, uses fallback workflows and may use mock data
-- `SFT demo`: uses the fine-tuned workflow generator served from a GPU machine, with DeepSeek still used inside workflow agent nodes
+There are two practical demo modes:
 
----
+- `DeepSeek or fallback demo`: no local SFT server required
+- `SFT demo`: workflow generation goes to a served LoRA adapter first, with
+  DeepSeek still available as the backend fallback path
 
-## Quick Start
+## Local App Setup
 
-### 1. Install Dependencies
-
-From the project root:
+### 1. Create The Environment
 
 ```bash
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
 python -m pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+If you plan to run tests during the demo setup, also install:
 
-For local workflow execution with DeepSeek-backed agent nodes:
+```bash
+python -m pip install pytest-asyncio
+```
+
+### 2. Configure `backend/.env`
+
+DeepSeek-backed generation:
 
 ```bash
 cat > backend/.env <<'EOF'
@@ -28,7 +36,7 @@ DEEPSEEK_API_KEY=your_key_here
 EOF
 ```
 
-If you are also using the SFT model through an SSH tunnel on your Mac:
+SFT-first generation with DeepSeek fallback:
 
 ```bash
 cat > backend/.env <<'EOF'
@@ -37,20 +45,27 @@ DEEPSEEK_API_KEY=your_key_here
 EOF
 ```
 
-### 3. Start Both Services
+If neither variable is set, the backend still runs and falls back to
+`workflows/example_shopping.json`.
+
+### 3. Start The Services
 
 ```bash
+source .venv/bin/activate
 ./start.sh
 ```
 
 This launches:
 
-- `Backend` on `http://localhost:8888`
-- `Frontend` on `http://localhost:8000`
+- backend on `http://localhost:8888`
+- frontend on `http://localhost:8000`
 
-Logs are written to `backend.log` and `frontend.log`.
+Logs:
 
-### 4. Verify the Backend
+- `backend.log`
+- `frontend.log`
+
+### 4. Sanity Check The Backend
 
 ```bash
 curl http://localhost:8888/health
@@ -62,7 +77,7 @@ Expected:
 {"status":"ok"}
 ```
 
-### 5. Open the Frontend
+### 5. Open The UI
 
 Visit:
 
@@ -70,63 +85,82 @@ Visit:
 http://localhost:8000
 ```
 
-You can now type directly into the chat box. Plain messages default to `run_workflow`.
+The current frontend behavior is:
 
-### 6. Stop the App
+- normal chat messages default to `run_workflow`
+- the command palette includes `get_workflow` and `run_workflow`
+- `Base URL` defaults to `http://localhost:8888`
+- file attachments are forwarded to the backend
+
+### 6. Stop The App
 
 ```bash
 ./stop.sh
 ```
 
----
+## Demo Flow To Show Teammates
 
-## Demo Modes
+### Option A: Show The Workflow Editor First
 
-### Fallback Demo
+1. In Chainlit, choose the `get_workflow` command.
+2. Ask for something like `find wireless earbuds under $80`.
+3. Open the returned editor link.
 
-This is the simplest path when you only want to show the app running locally.
+What happens in the current code:
 
-What it demonstrates:
+- `POST /get_workflow` generates a workflow from the latest chat message
+- the backend caches the generated workflow HTML per session
+- the response is a message with an `Open Editor` link
 
-- frontend/backend integration
-- workflow execution
-- streaming progress updates
-- retry/fallback behavior
+### Option B: Show Full Execution
 
-What it may use:
+1. Send a normal chat message in the UI.
+2. The frontend defaults that to `run_workflow`.
+3. Watch the streamed steps arrive in the chat.
 
-- generated workflows from DeepSeek, if configured
-- fallback workflow JSON if generation is unavailable
-- live product APIs where possible
-- mock fallback if external product search fails
+What happens in the current code:
 
-Good test queries:
+- `POST /run_workflow` either uses a provided workflow from the payload or
+  generates one on the fly
+- the backend sends an initial `Workflow Used` message containing the editor
+  link
+- execution results stream back as NDJSON and render as Chainlit steps/messages
+
+## Current Generation Chain
+
+`backend/workflow_generator.py` now uses this order:
+
+1. `SFT_MODEL_URL`
+2. `DEEPSEEK_API_KEY`
+3. `workflows/example_shopping.json`
+
+Important details:
+
+- generated workflows are validated before use
+- generated workflows are normalized to the current Markdown-first report format
+- old `dummy_store` and `fakestore` source names are normalized to
+  `dummyjson` and `fakestoreapi`
+- raw SFT outputs are written to `artifacts/sft_debug/`
+
+## Good Demo Queries
 
 - `find me wireless earbuds under $80`
-- `i want to buy a samsung galaxy watch`
-- `show me laptops with good reviews`
+- `show me a women's black handbag for work under $120`
+- `recommend a mechanical keyboard for coding under $100`
+- `best webcam for online meetings under $70`
 
-### SFT Demo
+These work well because the current product search implementation has explicit
+DummyJSON query/category handling for electronics and accessories.
 
-This uses your fine-tuned workflow generator for the `/get_workflow` and `/run_workflow` planning step.
+## SFT Demo Setup
 
-Important:
+### 1. Install Training And Serving Extras On The GPU Machine
 
-- the SFT model replaces workflow generation
-- DeepSeek is still required for `QueryAnalyzer` and `ReportGenerator` nodes in the current workflow design
+```bash
+python -m pip install torch transformers peft trl datasets accelerate bitsandbytes vllm
+```
 
-So the current runtime split is:
-
-- `SFT model`: generates the workflow JSON
-- `DeepSeek`: powers agent reasoning nodes inside that workflow
-
----
-
-## SFT Setup
-
-### 1. Train the SFT Model on a GPU Machine
-
-On the GPU environment:
+### 2. Train The Adapter
 
 ```bash
 python models/train.py \
@@ -137,19 +171,20 @@ python models/train.py \
   --seed 42
 ```
 
-Use the single curated training file, not the whole `data/workflows/` directory.
-That directory contains multiple `.jsonl` files, and the directory form would mix
-in older datasets unintentionally.
+Use the curated training file `data/workflows/train.jsonl`, not the whole
+directory.
 
-This saves the LoRA adapter under:
+### 3. Serve The Adapter
 
-```text
-models/checkpoints/shopmaibeli-sft
+Using the helper:
+
+```bash
+python models/serve.py \
+  --adapter_path models/checkpoints/shopmaibeli-sft \
+  --port 8001
 ```
 
-### 2. Serve the Adapter with vLLM
-
-On a GPU node:
+Or directly via vLLM:
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
@@ -164,179 +199,107 @@ python -m vllm.entrypoints.openai.api_server \
   --trust-remote-code
 ```
 
-### 3. Verify the Model Server
+### 4. Verify The SFT Server
 
-From another shell on the same network:
-
-```bash
-curl http://<gpu-node-hostname>:8001/v1/models
-```
-
-You should see both the base model and `shopmaibeli-sft`.
-
-### 4. Tunnel the Model to Your Mac
-
-If the model is running on a cluster GPU node and your app is running locally:
+From a shell that can reach the GPU host:
 
 ```bash
-ssh -L 8001:<gpu-node-hostname>:8001 your_soc_unix_id@xlogin.comp.nus.edu.sg
+curl http://<gpu-host>:8001/v1/models
 ```
 
-Leave that SSH session open. Then verify from your Mac:
+You should see the registered adapter name `shopmaibeli-sft`.
+
+### 5. Tunnel To Your Laptop If Needed
+
+Example:
+
+```bash
+ssh -L 8001:<gpu-host>:8001 your_soc_unix_id@xlogin.comp.nus.edu.sg
+```
+
+Then local verification:
 
 ```bash
 curl http://localhost:8001/v1/models
 ```
 
-### 5. Point the Backend to SFT
-
-On your local machine:
-
-```bash
-cat > backend/.env <<'EOF'
-SFT_MODEL_URL=http://localhost:8001
-DEEPSEEK_API_KEY=your_key_here
-EOF
-```
-
-Restart the app:
+### 6. Restart The Local App
 
 ```bash
 ./stop.sh
 ./start.sh
 ```
 
-### 6. Confirm the App Is Using SFT
+### 7. Confirm SFT Is Being Used
 
-After sending a chat message, inspect the backend log:
+After sending a query, inspect:
 
 ```bash
 tail -n 100 backend.log
 ```
 
-You want to see:
+Look for one of these current log lines:
 
 ```text
 [generate_workflow] SFT model succeeded
+[generate_workflow] DeepSeek fallback succeeded
+[generate_workflow] Using hardcoded fallback workflow
 ```
 
----
+If SFT emits malformed output, the raw response is also captured under
+`artifacts/sft_debug/latest_raw_response.txt`.
 
-## What Is Implemented
+## What The Current App Actually Demonstrates
+
+### Workflow Generation
+
+- SFT-first generation via OpenAI-compatible vLLM
+- DeepSeek fallback generation
+- hardcoded example workflow as the last safety net
+- validation and normalization before execution
 
 ### Workflow Execution
 
-- parallel execution with `asyncio.gather()`
-- retry with exponential backoff
-- graceful fallback when product search sources fail
+- DAG parsing and execution through `WorkflowExecutor`
+- streamed NDJSON updates
+- per-session state persistence
+- same-session request serialization
+- session observability via `/sessions`
 
 ### Nodes
 
 - `ChatTrigger`
-- `QueryAnalyzer` via agent node
+- `Agent`
 - `ProductSearch`
 - `ReviewAnalyzer`
-- `ReportGenerator`
 - `ConvertToFile`
+- `lmChatDeepSeek`
+- `memoryBufferWindow`
+- `outputParserStructured`
+- `toolCode`
 
-### Workflow Generation
+### Search And Reviews
 
-- SFT model via `SFT_MODEL_URL`
-- DeepSeek fallback via `DEEPSEEK_API_KEY`
-- hardcoded fallback workflow as final safety net
+- product search via `fakestoreapi`, `dummyjson`, or mock fallback
+- review analysis via local JSON review corpora in `output/`
+- simple rating-based fallback when no review corpus match is found
 
-### Tests
+## Test Commands
 
-Run non-integration tests with:
-
-```bash
-python -m pytest tests/ -v -m "not integration"
-```
-
-Current expected result:
-
-- `40 passed`
-- `10 deselected`
-
----
-
-## Known Limitations
-
-- The current workflow execution still uses DeepSeek for agent nodes even when SFT is enabled.
-- `ReviewAnalyzer` RAG mode is still a placeholder and falls back to simple rating-based analysis.
-- The trained SFT data may still prefer HTML-style report workflows, so the backend currently normalizes report prompts/output back toward Markdown for frontend reliability.
-- Product search uses external demo/sample APIs (`dummyjson`, `fakestoreapi`) rather than production commerce APIs.
-
----
-
-## Troubleshooting
-
-### `async def functions are not natively supported`
-
-You are probably running the wrong pytest binary. Use:
+Non-integration:
 
 ```bash
-python -m pytest tests/ -v -m "not integration"
+python -m pytest tests -m "not integration"
 ```
 
-### `DeepSeek API key not found`
-
-Your workflow contains agent nodes using DeepSeek, but `backend/.env` does not contain:
-
-```text
-DEEPSEEK_API_KEY=...
-```
-
-### `SFT model failed`
-
-Check:
+Integration:
 
 ```bash
-curl http://localhost:8001/v1/models
-tail -n 100 backend.log
+python -m pytest tests -m integration
 ```
 
-If `localhost:8001` is tunneled from a cluster node, make sure:
+Current caveat:
 
-- the GPU serving process is still running
-- the SSH tunnel terminal is still open
-
-### Product search falls back to mock
-
-Check `backend.log` for:
-
-- invalid product API URL construction
-- DummyJSON/FakeStore failures
-- fallback messages like `using mock data`
-
-### Ports already in use
-
-```bash
-lsof -i :8000
-lsof -i :8888
-./stop.sh
-```
-
----
-
-## Demo Checklist
-
-For a live SFT demo, keep these running:
-
-1. GPU-node model server on port `8001`
-2. SSH tunnel from your Mac to the GPU node
-3. local `./start.sh` app session
-
-Before presenting:
-
-```bash
-curl http://localhost:8001/v1/models
-curl http://localhost:8888/health
-tail -n 50 backend.log
-```
-
-You want to confirm:
-
-- the SFT model endpoint is reachable
-- the backend is healthy
-- the backend logs show `SFT model succeeded`
+- the repo collects async tests, but `requirements.txt` does not currently
+  install `pytest-asyncio`, so install that plugin first if you want the suite
+  to run cleanly

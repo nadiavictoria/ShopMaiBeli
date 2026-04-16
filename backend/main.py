@@ -24,6 +24,7 @@ WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "exam
 from backend.n8n_utils import build_n8n_demo_html
 from backend.workflow_generator import generate_workflow
 from workflow_engine import WorkflowExecutor, session_store
+from workflow_engine.models import NodeNotification
 
 # Configure logging
 logging.basicConfig(
@@ -49,15 +50,20 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8888")
 _editor_cache: dict = {}
 
 
+def _cache_workflow_editor(session_id: str, workflow: dict) -> str:
+    """Store editor HTML for the workflow used in a session and return its URL."""
+    html = build_n8n_demo_html(workflow, backend_url=BACKEND_URL)
+    _editor_cache[session_id] = html
+    return f"{BACKEND_URL}/workflow_editor/{session_id}"
+
+
 @app.post("/get_workflow")
 async def get_workflow(payload: dict = Body(default={})):
     """Generate a workflow and return a link to the editable graph editor."""
     try:
         session_id = payload.get("session_id", "default")
         workflow = generate_workflow(payload)
-        html = build_n8n_demo_html(workflow, backend_url=BACKEND_URL)
-        _editor_cache[session_id] = html
-        editor_url = f"{BACKEND_URL}/workflow_editor/{session_id}"
+        editor_url = _cache_workflow_editor(session_id, workflow)
         return {
             "type": "message",
             "name": "Workflow Preview",
@@ -107,9 +113,24 @@ async def run_workflow(payload: dict = Body(default={})):
         logger.info("[run_workflow] using pre-built workflow from payload")
     else:
         workflow = generate_workflow(payload)
+
+    editor_url = _cache_workflow_editor(session_id, workflow)
     executor = WorkflowExecutor.from_json(workflow)
 
     async def stream():
+        yield NodeNotification(
+            node_name="Workflow Used",
+            session_id=session_id,
+            message=(
+                f"Workflow **{workflow.get('name', 'Unknown')}** used for this run.\n\n"
+                f"[Open Editor →]({editor_url})"
+            ),
+            notification_type="message",
+            data={
+                "editor_url": editor_url,
+                "workflow_name": workflow.get("name", "Unknown"),
+            },
+        ).to_json()
         async for n in executor.execute(session_id, chat_history, files):
             yield n.to_json()
 
