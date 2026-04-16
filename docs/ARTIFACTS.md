@@ -1,226 +1,289 @@
 # Artifacts And Reproducibility
 
-This project is split into:
+This document reflects the current checked-in code paths, especially:
 
-- source code in GitHub
-- large artifacts in Google Drive
+- `models/train.py`
+- `models/serve.py`
+- `backend/workflow_generator.py`
+- `nodes/review_analyzer.py`
+- `scripts/probe_sft_outputs.py`
 
-Do not commit trained checkpoints or logs to GitHub. Keep them in a local
-`artifacts/` folder after downloading from Drive.
+The repo is intentionally lightweight. Large model outputs, logs, and optional
+datasets should live outside Git or under ignored local directories.
 
-## Recommended Local Layout
+## Checked-In Runtime Artifacts
 
-After cloning the repo, keep large files in this layout:
+The current repo already references these local runtime files directly:
+
+```text
+artifacts/
+└── sft_debug/
+    ├── latest_raw_response.txt
+    └── <timestamp>_raw_response.txt
+
+output/
+├── amazon_review_small.csv
+├── amazon_review_small.json
+├── amazon_reviews_sample.csv
+├── amazon_reviews_sample.json
+├── full_amazon_fashion_review.csv
+├── full_amazon_fashion_review.json
+├── full_amazon_review.csv
+├── full_amazon_review.json
+├── heldout_sft_queries.txt
+├── sft_probe_results.jsonl
+├── sft_probe_results_v2.jsonl
+├── sft_probe_results_v3a.jsonl
+└── sft_probe_results_v3b.jsonl
+```
+
+The code currently reads these paths by default:
+
+- `backend/workflow_generator.py`
+  writes SFT raw-output debug files to `artifacts/sft_debug/`
+- `nodes/review_analyzer.py`
+  reads `output/full_amazon_fashion_review.json` and
+  `output/amazon_reviews_sample.json` by default
+- `scripts/probe_sft_outputs.py`
+  reads `output/heldout_sft_queries.txt` and writes
+  `output/sft_probe_results.jsonl` by default
+
+## Recommended Layout For New Large Artifacts
+
+Keep large, generated, or machine-specific files in this structure:
 
 ```text
 ShopMaiBeli/
 ├── artifacts/
 │   ├── checkpoints/
-│   │   └── shopmaibeli-sft-v3/
-│   │       ├── adapter_model.safetensors
+│   │   └── shopmaibeli-sft/
 │   │       ├── adapter_config.json
+│   │       ├── adapter_model.safetensors
+│   │       ├── special_tokens_map.json
 │   │       ├── tokenizer.json
 │   │       ├── tokenizer_config.json
-│   │       ├── special_tokens_map.json
-│   │       ├── added_tokens.json
-│   │       ├── merges.txt
-│   │       ├── vocab.json
-│   │       ├── chat_template.jinja
-│   │       ├── training_args.bin
 │   │       └── training_metadata.json
-│   └── logs/
-│       └── train-577860.log
+│   ├── logs/
+│   │   └── train-<jobid>.log
+│   └── sft_debug/
+│       ├── latest_raw_response.txt
+│       └── <timestamp>_raw_response.txt
 ├── output/
 │   ├── amazon_reviews_sample.json
-│   ├── amazon_reviews_sample.csv
 │   ├── full_amazon_fashion_review.json
-│   ├── full_amazon_fashion_review.csv
-│   ├── optional_full_corpus/
-│   │   ├── full_amazon_review.json
-│   │   └── full_amazon_review.csv
-│   └── heldout_sft_queries.txt
+│   ├── full_amazon_review.json
+│   ├── heldout_sft_queries.txt
+│   └── sft_probe_results.jsonl
 ```
 
-This keeps the repo clean while making the runtime paths predictable.
+Why this layout:
 
-## What To Upload To Google Drive
+- it matches the current default code paths
+- it keeps trained adapters and logs out of normal source control
+- it preserves a dedicated place for malformed SFT generations
 
-Create a top-level Drive folder like:
+## What Should Stay In Git
 
-```text
-ShopMaiBeli_artifacts/
-├── checkpoints/
-│   └── shopmaibeli-sft-v3/
-├── datasets/
-│   ├── runtime/
-│   │   ├── amazon_reviews_sample.json
-│   │   ├── amazon_reviews_sample.csv
-│   │   ├── full_amazon_fashion_review.json
-│   │   └── full_amazon_fashion_review.csv
-│   └── optional_full_corpus/
-│       ├── full_amazon_review.json
-│       └── full_amazon_review.csv
-├── logs/
-│   └── train-577860.log
-└── optional/
-    ├── sft_probe_results_v3b.jsonl
-    └── screenshots_or_demo_assets/
-```
+Keep these in the repo:
 
-Upload these files to Drive:
+- source code
+- prompt files in `models/prompts/`
+- workflow JSON in `workflows/`
+- scripts such as `scripts/probe_sft_outputs.py`
+- lightweight sample datasets and held-out query lists already tracked in
+  `output/`
+- documentation describing how to obtain larger artifacts
 
-- `shopmaibeli-sft-v3/`
-- `train-577860.log`
-- `amazon_reviews_sample.json`
-- `amazon_reviews_sample.csv`
-- `full_amazon_fashion_review.json`
-- `full_amazon_fashion_review.csv`
+Do not commit these unless you explicitly want versioned artifacts:
 
-Optional but useful:
+- new training checkpoints
+- SLURM logs and other training logs
+- duplicated large review corpora
+- ad hoc local probe dumps beyond the intended reproducibility set
+- raw temporary experiment outputs
 
-- `full_amazon_review.json`
-- `full_amazon_review.csv`
-- `output/sft_probe_results_v3b.jsonl`
-- a short text file containing the Drive folder structure and checkpoint version
+## Training Artifact Outputs
 
-## What To Keep In GitHub
+`models/train.py` writes the LoRA adapter to the requested `--output_dir`.
 
-Keep these in GitHub:
-
-- all source code
-- prompts
-- scripts
-- training data construction code
-- small metadata files
-- instructions for downloading artifacts
-
-Do not keep these in GitHub:
-
-- trained checkpoints
-- training logs
-- large datasets
-- local runtime logs
-
-## Download Instructions
-
-1. Clone the repo.
-2. Download the artifact folder from Google Drive.
-3. Copy the downloaded files into:
-
-```text
-artifacts/checkpoints/shopmaibeli-sft-v3/
-artifacts/logs/train-577860.log
-output/amazon_reviews_sample.json
-output/amazon_reviews_sample.csv
-output/full_amazon_fashion_review.json
-output/full_amazon_fashion_review.csv
-```
-
-Optional large corpus files can go in:
-
-```text
-output/full_amazon_review.json
-output/full_amazon_review.csv
-```
-
-The current lightweight RAG prototype only requires:
-
-- `output/amazon_reviews_sample.json`
-- `output/full_amazon_fashion_review.json`
-
-The full Amazon review corpus is optional for now and is much larger.
-
-## Running Without The Trained SFT
-
-If you only want the DeepSeek-backed system:
+Current canonical training command:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-echo "DEEPSEEK_API_KEY=your-key-here" > backend/.env
-./start.sh
+python models/train.py \
+  --data_dir data/workflows/train.jsonl \
+  --output_dir models/checkpoints/shopmaibeli-sft \
+  --epochs 3 \
+  --strict_validation \
+  --seed 42
 ```
 
-This uses DeepSeek for workflow generation when `SFT_MODEL_URL` is not set.
-It still expects the local review datasets above if you want the review
-retrieval path in `ReviewAnalyzer(mode="rag")`.
+That output directory should contain at least:
 
-## Running With The Trained SFT
+- adapter weights
+- tokenizer files
+- `training_metadata.json`
 
-### 1. Start the SFT server
+If you want the artifact to live outside the repo working tree, prefer a path
+under `artifacts/checkpoints/`, for example:
 
-If the checkpoint is in `artifacts/checkpoints/shopmaibeli-sft-v3/`:
+```bash
+python models/train.py \
+  --data_dir data/workflows/train.jsonl \
+  --output_dir artifacts/checkpoints/shopmaibeli-sft \
+  --epochs 3 \
+  --strict_validation \
+  --seed 42
+```
+
+## Serving Artifacts
+
+The current serving helper is `models/serve.py`.
+
+Example with an artifact-managed checkpoint:
 
 ```bash
 python models/serve.py \
-  --adapter_path artifacts/checkpoints/shopmaibeli-sft-v3 \
+  --adapter_path artifacts/checkpoints/shopmaibeli-sft \
   --port 8001
 ```
 
-`models/serve.py` already includes `--max-lora-rank 64`, so it can load the
-trained LoRA adapter.
-
-### 2. Configure the backend
-
-Set `backend/.env` to:
+Equivalent direct vLLM command:
 
 ```bash
-DEEPSEEK_API_KEY=your-key-here
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --enable-lora \
+  --lora-modules shopmaibeli-sft=artifacts/checkpoints/shopmaibeli-sft \
+  --max-lora-rank 64 \
+  --port 8001 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.9 \
+  --dtype bfloat16 \
+  --trust-remote-code
+```
+
+The backend expects:
+
+```bash
 SFT_MODEL_URL=http://localhost:8001
 ```
 
-### 3. Start the app
+When this path is exercised, malformed or suspicious raw SFT outputs can be
+inspected under `artifacts/sft_debug/`.
 
-```bash
-./start.sh
-```
+## Review Corpus Artifacts
 
-### 4. Verify that SFT is used
+`nodes/review_analyzer.py` defaults to:
 
-In a second terminal:
+- `output/full_amazon_fashion_review.json`
+- `output/amazon_reviews_sample.json`
 
-```bash
-tail -n 200 -f backend.log
-```
+If those files are missing, the code logs the absence and falls back to simple
+rating-based review summaries.
 
-Send a query in the UI and look for:
+If you want to override the corpus in a workflow, use node parameters:
 
-```text
-[generate_workflow] SFT model succeeded
-```
+- `datasetPath`
+- `datasetPaths`
 
-## Re-running The Held-Out Probe
+That means reproducibility is best when the exact JSON corpus files used for a
+demo or experiment are preserved alongside the checkpoint/log metadata.
 
-After serving the SFT model locally on port `8001`:
+## SFT Probe Artifacts
+
+Current probe command:
 
 ```bash
 python scripts/probe_sft_outputs.py \
   --base-url http://localhost:8001 \
   --model shopmaibeli-sft \
-  --max-tokens 1400 \
-  --output output/sft_probe_results_v3b.jsonl
+  --output output/sft_probe_results.jsonl
 ```
 
-This checks:
+By default the script:
 
-- raw JSON discipline
-- parse success
-- workflow schema validity
+- reads held-out prompts from `output/heldout_sft_queries.txt`
+- writes line-delimited diagnostics to `output/sft_probe_results.jsonl`
+- records parseability, validation status, markdown fences, explanatory text,
+  and disallowed node/connection types
 
-## Suggested Submission Packaging
+If you want to preserve a specific evaluation run, rename the output after the
+probe finishes, for example:
 
-For GitHub:
+```text
+output/sft_probe_results_v4.jsonl
+```
 
-- source code only
-- include this artifact guide
+## Suggested External Storage Layout
 
-For Canvas ZIP:
+For Google Drive or another artifact store, a practical layout is:
 
-- source code
-- report PDF
-- demo video
-- optionally include the checkpoint only if the ZIP size limit allows it
+```text
+ShopMaiBeli_artifacts/
+├── checkpoints/
+│   └── shopmaibeli-sft/
+├── logs/
+│   └── train-<jobid>.log
+├── probes/
+│   ├── sft_probe_results_v3b.jsonl
+│   └── sft_probe_results_v4.jsonl
+└── datasets/
+    ├── amazon_reviews_sample.json
+    ├── full_amazon_fashion_review.json
+    └── full_amazon_review.json
+```
 
-If the checkpoint is too large for submission, mention in the report that the
-trained adapter and local datasets are distributed separately via Google Drive.
+This mirrors the current code assumptions while keeping big files out of Git.
+
+## Reproducing The App Without SFT
+
+DeepSeek-only:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cat > backend/.env <<'EOF'
+DEEPSEEK_API_KEY=your-key-here
+EOF
+./start.sh
+```
+
+With no model env vars at all, the backend still runs and falls back to
+`workflows/example_shopping.json`.
+
+## Reproducing The App With SFT
+
+1. Serve the adapter on port `8001`.
+2. Set:
+
+```bash
+cat > backend/.env <<'EOF'
+SFT_MODEL_URL=http://localhost:8001
+DEEPSEEK_API_KEY=your-key-here
+EOF
+```
+
+3. Start the app:
+
+```bash
+./start.sh
+```
+
+4. Confirm the generation path:
+
+```bash
+tail -n 100 backend.log
+```
+
+Look for:
+
+```text
+[generate_workflow] SFT model succeeded
+```
+
+And if debugging is needed:
+
+```text
+artifacts/sft_debug/latest_raw_response.txt
+```

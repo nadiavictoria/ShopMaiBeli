@@ -10,7 +10,7 @@ import logging
 import os
 from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 
 # Load environment variables — check backend/.env then project root .env
@@ -23,7 +23,8 @@ WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "exam
 
 from backend.n8n_utils import build_n8n_demo_html
 from backend.workflow_generator import generate_workflow
-from workflow_engine import WorkflowExecutor
+from workflow_engine import WorkflowExecutor, session_store
+from workflow_engine.models import NodeNotification
 
 # Configure logging
 logging.basicConfig(
@@ -43,19 +44,34 @@ app.add_middleware(
 )
 
 
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8888")
+
+# In-memory cache: session_id -> generated workflow HTML
+_editor_cache: dict = {}
+
+
+def _cache_workflow_editor(session_id: str, workflow: dict) -> str:
+    """Store editor HTML for the workflow used in a session and return its URL."""
+    html = build_n8n_demo_html(workflow, backend_url=BACKEND_URL)
+    _editor_cache[session_id] = html
+    return f"{BACKEND_URL}/workflow_editor/{session_id}"
+
+
 @app.post("/get_workflow")
 async def get_workflow(payload: dict = Body(default={})):
-    """
-    Return HTML with n8n-demo visualization of the n8n workflow.
-    """
+    """Generate a workflow and return a link to the editable graph editor."""
     try:
+        session_id = payload.get("session_id", "default")
         workflow = generate_workflow(payload)
-        html = build_n8n_demo_html(workflow)
+        editor_url = _cache_workflow_editor(session_id, workflow)
         return {
             "type": "message",
             "name": "Workflow Preview",
-            "text": f"Successfully built workflow: **{workflow.get('name', 'Unknown')}**",
-            "html": html,
+            "text": (
+                f"Workflow **{workflow.get('name', 'Unknown')}** generated.\n\n"
+                f"[Open Editor →]({editor_url})"
+            ),
+            "html": "",
         }
     except Exception as e:
         return {
@@ -66,22 +82,55 @@ async def get_workflow(payload: dict = Body(default={})):
         }
 
 
+@app.get("/workflow_editor/{session_id}", response_class=HTMLResponse)
+async def workflow_editor(session_id: str):
+    """Serve the editable workflow graph editor for the given session."""
+    html = _editor_cache.get(session_id)
+    if not html:
+        return HTMLResponse("<h2>No workflow found for this session. Run /get_workflow first.</h2>", status_code=404)
+    return HTMLResponse(html)
+
+
 logger = logging.getLogger(__name__)
 
 
 @app.post("/run_workflow")
 async def run_workflow(payload: dict = Body(default={})):
-    """Generate a workflow from the user query, then run it and stream NDJSON results."""
+    """Execute a workflow and stream NDJSON results.
+
+    If payload contains a 'workflow' key, that workflow JSON is used directly
+    (e.g. submitted from the editable graph editor). Otherwise a new workflow
+    is generated from the user query via the SFT/DeepSeek/fallback chain.
+    """
     session_id = payload.get("session_id", "default")
     chat_history = payload.get("chat_history", [])
     files = payload.get("files", [])
 
     logger.info(f"[run_workflow] session_id={session_id}, files={len(files)}")
 
-    workflow = generate_workflow(payload)
+    if "workflow" in payload and payload["workflow"]:
+        workflow = payload["workflow"]
+        logger.info("[run_workflow] using pre-built workflow from payload")
+    else:
+        workflow = generate_workflow(payload)
+
+    editor_url = _cache_workflow_editor(session_id, workflow)
     executor = WorkflowExecutor.from_json(workflow)
 
     async def stream():
+        yield NodeNotification(
+            node_name="Workflow Used",
+            session_id=session_id,
+            message=(
+                f"Workflow **{workflow.get('name', 'Unknown')}** used for this run.\n\n"
+                f"[Open Editor →]({editor_url})"
+            ),
+            notification_type="message",
+            data={
+                "editor_url": editor_url,
+                "workflow_name": workflow.get("name", "Unknown"),
+            },
+        ).to_json()
         async for n in executor.execute(session_id, chat_history, files):
             yield n.to_json()
 
@@ -90,6 +139,20 @@ async def run_workflow(payload: dict = Body(default={})):
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """List all active sessions with metadata (multi-tenancy observability)."""
+    session_store.evict_stale(max_age_seconds=3600)
+    return {"sessions": session_store.active_sessions()}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Evict a specific session from the store."""
+    session_store.delete(session_id)
+    return {"deleted": session_id}
 
 
 @app.get("/health")

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "prompts", "workflow_gen.txt")
 _SFT_PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "prompts", "workflow_gen_sft.txt")
 _FALLBACK_WORKFLOW_PATH = os.path.join(os.path.dirname(__file__), "..", "workflows", "example_shopping.json")
+_SFT_DEBUG_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts", "sft_debug")
 
 
 def _load_system_prompt(path: str = _PROMPT_PATH) -> str:
@@ -42,6 +44,20 @@ def _load_system_prompt(path: str = _PROMPT_PATH) -> str:
 def _load_fallback_workflow() -> dict:
     with open(_FALLBACK_WORKFLOW_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _write_sft_debug_artifact(raw_text: str) -> None:
+    """Persist the latest raw SFT response for debugging malformed outputs."""
+    try:
+        os.makedirs(_SFT_DEBUG_DIR, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        latest_path = os.path.join(_SFT_DEBUG_DIR, "latest_raw_response.txt")
+        timestamped_path = os.path.join(_SFT_DEBUG_DIR, f"{timestamp}_raw_response.txt")
+        for path in (latest_path, timestamped_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(raw_text or "")
+    except Exception as exc:
+        logger.warning("[_write_sft_debug_artifact] failed to persist raw SFT output: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +147,11 @@ def _normalize_report_output(workflow: dict) -> dict:
     can display the final report cleanly without raw HTML leakage.
     """
     nodes = workflow.get("nodes", [])
+    if len(nodes) == 1 and isinstance(nodes[0], list):
+        logger.info("[_normalize_report_output] flattening nested nodes array from generated workflow")
+        nodes = nodes[0]
+        workflow["nodes"] = nodes
+
     for node in nodes:
         node_type = node.get("type", "")
         node_name = node.get("name", "")
@@ -159,7 +180,16 @@ def _normalize_report_output(workflow: dict) -> dict:
             if file_name.endswith(".html"):
                 options["fileName"] = file_name[:-5] + ".md"
 
+        if node_type == "shopmaibeli.productSearch":
+            source = parameters.get("source", "")
+            if source == "dummy_store":
+                parameters["source"] = "dummyjson"
+            elif source == "fakestore":
+                parameters["source"] = "fakestoreapi"
+
     return workflow
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +205,16 @@ def _extract_json(text: str) -> dict:
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```\s*", "", text)
     text = text.strip()
+
+    repaired_text = text
+    # Common malformed SFT pattern: "nodes": [[ ... ]], should be a single list.
+    repaired_text = repaired_text.replace('"nodes": [[', '"nodes": [')
+    repaired_text = repaired_text.replace(']], "connections"', '], "connections"')
+    repaired_text = repaired_text.replace(']], "settings"', '], "settings"')
+    repaired_text = repaired_text.replace(']], "meta"', '], "meta"')
+    if repaired_text != text:
+        logger.info("[_extract_json] applied common JSON repair rules to model output")
+        text = repaired_text
 
     # Try to parse the whole thing first
     try:
@@ -227,6 +267,7 @@ def _call_sft_model(user_query: str) -> dict:
     logger.info("[_call_sft_model] raw response length=%s", len(raw) if raw else 0)
     if raw:
         logger.info("[_call_sft_model] raw response preview=%r", raw[:400])
+        _write_sft_debug_artifact(raw)
     return _extract_json(raw)
 
 
