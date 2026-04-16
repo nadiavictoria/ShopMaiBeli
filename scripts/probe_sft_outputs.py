@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
         help="Where to save raw generations and diagnostics",
     )
     parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature")
-    parser.add_argument("--max-tokens", type=int, default=768, help="Maximum output tokens")
+    parser.add_argument("--max-tokens", type=int, default=2200, help="Maximum output tokens")
     return parser.parse_args()
 
 

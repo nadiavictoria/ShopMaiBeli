@@ -281,7 +281,7 @@ def _call_sft_model(user_query: str) -> dict:
             {"role": "user", "content": user_query},
         ],
         temperature=0.1,
-        max_tokens=1400,
+        max_tokens=2200,
     )
     raw = response.choices[0].message.content
     logger.info("[_call_sft_model] raw response length=%s", len(raw) if raw else 0)

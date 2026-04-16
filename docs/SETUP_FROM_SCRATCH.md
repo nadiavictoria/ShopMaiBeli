@@ -390,6 +390,7 @@ Example:
 
 ```bash
 ssh -L 8001:<gpu-host>:8001 your_soc_unix_id@xlogin.comp.nus.edu.sg
+ssh -L 8001:xgph10:8001 nadia@xlogin.comp.nus.edu.sg
 ```
 
 Keep that SSH session open.
