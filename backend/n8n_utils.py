@@ -100,7 +100,8 @@ const NODE_TYPES = {{
 
 // ── State ────────────────────────────────────────────────────────────────────
 let nodes = {{}};    // id → {{id,name,type,x,y,parameters}}
-let edges = [];     // [{{from:id, to:id}}]
+let edges = [];     // editable main-flow edges: [{{from:id, to:id}}]
+let auxEdges = [];  // preserved non-main edges: [{{from:id, to:id, connType:string}}]
 let nxtId = 1;
 let drag  = null;   // {{nodeId,mx0,my0,nx0,ny0}}
 let conn  = null;   // {{fromId,mx,my}}
@@ -119,9 +120,16 @@ function init() {{
 
   Object.entries(WORKFLOW.connections || {{}}).forEach(([fromName, types]) => {{
     const fid = nameToId[fromName]; if (!fid) return;
-    (types.main || []).forEach(list => list.forEach(c => {{
-      const tid = nameToId[c.node]; if (tid) edges.push({{from:fid,to:tid}});
-    }}));
+    Object.entries(types || {{}}).forEach(([connType, outputs]) => {{
+      (outputs || []).forEach(list => (list || []).forEach(c => {{
+        const tid = nameToId[c.node]; if (!tid) return;
+        if (connType === 'main') {{
+          edges.push({{from:fid,to:tid}});
+        }} else {{
+          auxEdges.push({{from:fid,to:tid,connType}});
+        }}
+      }}));
+    }});
   }});
 
   const palette = document.getElementById('palette');
@@ -183,6 +191,14 @@ function renderEdges() {{
     path.addEventListener('click', () => {{ edges.splice(i,1); render(); }});
     svg.appendChild(path);
   }});
+  auxEdges.forEach(e => {{
+    if (!nodes[e.from] || !nodes[e.to]) return;
+    const p1=outPt(e.from), p2=inPt(e.to);
+    const path = makePath(bezier(p1.x,p1.y,p2.x,p2.y), edgeColor(e.connType), true);
+    path.setAttribute('opacity', '0.9');
+    path.setAttribute('title', e.connType);
+    svg.appendChild(path);
+  }});
   if (conn) {{
     const p1 = outPt(conn.fromId);
     svg.appendChild(makePath(bezier(p1.x,p1.y,conn.mx,conn.my), '#94a3b8', true));
@@ -200,6 +216,14 @@ function makePath(d, stroke, dashed) {{
   return p;
 }}
 
+function edgeColor(connType) {{
+  if (connType === 'ai_languageModel') return '#f59e0b';
+  if (connType === 'ai_memory') return '#14b8a6';
+  if (connType === 'ai_tool') return '#ec4899';
+  if (connType === 'ai_outputParser') return '#8b5cf6';
+  return '#64748b';
+}}
+
 // ── Mutations ────────────────────────────────────────────────────────────────
 function addNode(type) {{
   const id = 'n'+(nxtId++);
@@ -211,6 +235,7 @@ function addNode(type) {{
 function deleteNode(id) {{
   delete nodes[id];
   edges = edges.filter(e => e.from!==id && e.to!==id);
+  auxEdges = auxEdges.filter(e => e.from!==id && e.to!==id);
   render();
 }}
 
@@ -291,6 +316,12 @@ function buildWorkflow() {{
     const fn=nodes[e.from], tn=nodes[e.to]; if (!fn||!tn) return;
     if (!conns[fn.name]) conns[fn.name] = {{main:[[]]}};
     conns[fn.name].main[0].push({{node:tn.name,type:'main',index:0}});
+  }});
+  auxEdges.forEach(e => {{
+    const fn=nodes[e.from], tn=nodes[e.to]; if (!fn||!tn||!e.connType) return;
+    if (!conns[fn.name]) conns[fn.name] = {{}};
+    if (!conns[fn.name][e.connType]) conns[fn.name][e.connType] = [[]];
+    conns[fn.name][e.connType][0].push({{node:tn.name,type:e.connType,index:0}});
   }});
   return {{...WORKFLOW, nodes:nodeList, connections:conns}};
 }}

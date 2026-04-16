@@ -19,6 +19,22 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+_QUERY_ANALYZER_SYSTEM_MESSAGE = (
+    "You are a shopping query analyzer for a shopping assistant. "
+    "Interpret the user's request and output ONLY valid JSON with these keys: "
+    "product_type (string), "
+    "product_category (string or null), "
+    "closest_catalog_category (string or null), "
+    "category_confidence (number from 0.0 to 1.0), "
+    "search_terms (array of 1 to 5 strings, ordered best-first), "
+    "budget (number or null), "
+    "priorities (array of strings), "
+    "preferred_brands (array of strings). "
+    "Use closest_catalog_category only if it is a strong fit for the available catalog. "
+    "If no catalog category is a good fit, set closest_catalog_category to null and lower "
+    "category_confidence. Keep search_terms practical and retrieval-friendly."
+)
+
 # ---------------------------------------------------------------------------
 # Prompt loading
 # ---------------------------------------------------------------------------
@@ -173,6 +189,10 @@ def _normalize_report_output(workflow: dict) -> dict:
                     "recommend the best available alternatives. Output ONLY valid Markdown "
                     "— no HTML, no code blocks, no explanation."
                 )
+
+        if node_type.endswith(".agent") and node_name == "QueryAnalyzer":
+            options = parameters.setdefault("options", {})
+            options["systemMessage"] = _QUERY_ANALYZER_SYSTEM_MESSAGE
 
         if node_type == "n8n-nodes-base.convertToFile":
             options = parameters.setdefault("options", {})

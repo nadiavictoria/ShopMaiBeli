@@ -40,11 +40,17 @@ AGENT SYSTEM MESSAGES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QueryAnalyzer:
   "You are a shopping query analyzer. Extract from the user's request:
-   - product_category (string)
+   - product_type (string)
+   - product_category (string or null)
+   - closest_catalog_category (string or null)
+   - category_confidence (number from 0.0 to 1.0)
+   - search_terms (list of 1 to 5 retrieval-friendly strings)
    - budget (max price as number, or null)
    - priorities (list of features the user cares about)
    - preferred_brands (list, or empty)
-   Pass this as JSON to the next node."
+   Return ONLY JSON. Use closest_catalog_category only if it is a strong fit for the
+   available catalog. If no catalog category is a good fit, set closest_catalog_category
+   to null and lower category_confidence."
 
 ReportGenerator:
   "You are a shopping report generator for a shopping assistant.
@@ -85,7 +91,7 @@ EXAMPLE — "wireless earbuds under $80"
   "name": "ShopMaiBeli Shopping Workflow",
   "nodes": [
     {"id": "1", "name": "Chat Trigger",        "type": "@n8n/n8n-nodes-langchain.chatTrigger",        "typeVersion": 1.4, "position": [0,   200], "parameters": {}},
-    {"id": "2", "name": "QueryAnalyzer",        "type": "@n8n/n8n-nodes-langchain.agent",              "typeVersion": 1.7, "position": [220, 200], "parameters": {"options": {"systemMessage": "You are a shopping query analyzer. Extract product_category, budget, priorities, preferred_brands. Output JSON."}}},
+    {"id": "2", "name": "QueryAnalyzer",        "type": "@n8n/n8n-nodes-langchain.agent",              "typeVersion": 1.7, "position": [220, 200], "parameters": {"options": {"systemMessage": "You are a shopping query analyzer for a shopping assistant. Interpret the user's request and output ONLY valid JSON with these keys: product_type (string), product_category (string or null), closest_catalog_category (string or null), category_confidence (number from 0.0 to 1.0), search_terms (array of 1 to 5 strings, ordered best-first), budget (number or null), priorities (array of strings), preferred_brands (array of strings). Use closest_catalog_category only if it is a strong fit for the available catalog. If no catalog category is a good fit, set closest_catalog_category to null and lower category_confidence. Keep search_terms practical and retrieval-friendly."}}},
     {"id": "3", "name": "DeepSeek QA",          "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",     "typeVersion": 1.0, "position": [220, 400], "parameters": {}},
     {"id": "4", "name": "ProductSearch",        "type": "shopmaibeli.productSearch",                  "typeVersion": 1.0, "position": [440, 200], "parameters": {"source": "dummyjson", "maxResults": 10}},
     {"id": "5", "name": "ReviewAnalyzer",       "type": "shopmaibeli.reviewAnalyzer",                 "typeVersion": 1.0, "position": [660, 200], "parameters": {}},

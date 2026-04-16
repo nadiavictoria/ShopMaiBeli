@@ -87,6 +87,8 @@ _LOCAL_REVIEW_DATASETS = (
     os.path.join(os.path.dirname(__file__), "..", "output", "amazon_reviews_sample.json"),
 )
 
+_DEFAULT_CATEGORY_CONFIDENCE = 0.7
+
 
 class ProductSearchExecutor(BaseNodeExecutor):
     """
@@ -149,6 +151,50 @@ class ProductSearchExecutor(BaseNodeExecutor):
 
         return None
 
+    @staticmethod
+    def _coerce_confidence(value: Any) -> float:
+        if isinstance(value, (int, float)):
+            return max(0.0, min(1.0, float(value)))
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"high", "strong"}:
+                return 0.9
+            if normalized in {"medium", "moderate"}:
+                return 0.6
+            if normalized in {"low", "weak"}:
+                return 0.3
+            try:
+                return max(0.0, min(1.0, float(normalized)))
+            except ValueError:
+                return _DEFAULT_CATEGORY_CONFIDENCE
+
+        return _DEFAULT_CATEGORY_CONFIDENCE
+
+    @classmethod
+    def _extract_query_plan(cls, parsed: Dict[str, Any]) -> Dict[str, Any]:
+        search_terms = parsed.get("search_terms", [])
+        if isinstance(search_terms, str):
+            search_terms = [search_terms]
+        elif not isinstance(search_terms, list):
+            search_terms = []
+
+        cleaned_terms = []
+        for term in search_terms:
+            if term is None:
+                continue
+            cleaned = str(term).strip()
+            if cleaned and cleaned not in cleaned_terms:
+                cleaned_terms.append(cleaned)
+
+        return {
+            "product_type": str(parsed.get("product_type", "") or "").strip(),
+            "product_category": str(parsed.get("product_category", "") or "").strip(),
+            "closest_catalog_category": str(parsed.get("closest_catalog_category", "") or "").strip(),
+            "search_terms": cleaned_terms,
+            "category_confidence": cls._coerce_confidence(parsed.get("category_confidence")),
+        }
+
     async def execute(
         self,
         input_data: NodeInput,
@@ -163,15 +209,32 @@ class ProductSearchExecutor(BaseNodeExecutor):
         input_json = input_data.first_json
         query = input_json.get("chatInput", "") or input_json.get("query", "")
         category = input_json.get("category", category)
+        search_terms: List[str] = []
+        use_category_first = bool(category)
 
         # QueryAnalyzer outputs {"output": "{...json...}"} — parse it to extract
-        # product_category and use it as the search query when nothing else is set
+        # normalized category/search terms for retrieval
         output_raw = input_json.get("output", "")
         if output_raw and isinstance(output_raw, str):
             parsed = self._extract_structured_output(output_raw)
             if parsed:
-                query = query or parsed.get("product_category", "") or ""
-                category = category or parsed.get("product_category", None)
+                plan = self._extract_query_plan(parsed)
+                category = (
+                    category
+                    or plan["closest_catalog_category"]
+                    or plan["product_category"]
+                    or None
+                )
+                search_terms = plan["search_terms"]
+                use_category_first = bool(category) and plan["category_confidence"] >= 0.6
+
+                if not query:
+                    query = (
+                        (search_terms[0] if search_terms else "")
+                        or plan["product_type"]
+                        or plan["product_category"]
+                        or ""
+                    )
             elif not query:
                 # output is already plain text (e.g. Markdown) — use as query
                 query = output_raw[:100]
@@ -183,9 +246,18 @@ class ProductSearchExecutor(BaseNodeExecutor):
 
         try:
             if source == "fakestoreapi":
-                products = await self._fetch_fakestoreapi(category, max_results)
+                products = await self._fetch_fakestoreapi(
+                    category if use_category_first else None,
+                    max_results,
+                )
             elif source == "dummyjson":
-                products = await self._fetch_dummyjson(query, category, max_results)
+                products = await self._fetch_dummyjson(
+                    query,
+                    category,
+                    max_results,
+                    search_terms=search_terms,
+                    use_category_first=use_category_first,
+                )
             else:
                 products = self._get_mock_products(query, max_results)
 
@@ -199,7 +271,13 @@ class ProductSearchExecutor(BaseNodeExecutor):
         except Exception as exc:
             logger.warning(f"[{self.node.name}] {source!r} failed ({exc}), falling back to dummyjson")
             try:
-                products = await self._fetch_dummyjson(query, category, max_results)
+                products = await self._fetch_dummyjson(
+                    query,
+                    category,
+                    max_results,
+                    search_terms=search_terms,
+                    use_category_first=use_category_first,
+                )
                 source = "dummyjson (fallback)"
                 logger.info(f"[{self.node.name}] fallback found {len(products)} products")
             except Exception as exc2:
@@ -249,6 +327,8 @@ class ProductSearchExecutor(BaseNodeExecutor):
         query: str,
         category: Optional[str],
         max_results: int,
+        search_terms: Optional[List[str]] = None,
+        use_category_first: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Prefer category search (more relevant) over keyword search.
@@ -259,7 +339,9 @@ class ProductSearchExecutor(BaseNodeExecutor):
             tried_urls = []
 
             slug = self._resolve_dummyjson_slug(category, query)
-            if slug:
+            query_candidates = self._build_dummyjson_queries(query, category, search_terms)
+
+            if use_category_first and slug:
                 products = await self._dummyjson_request(
                     client,
                     f"https://dummyjson.com/products/category/{slug}?limit={max_results}",
@@ -268,12 +350,21 @@ class ProductSearchExecutor(BaseNodeExecutor):
                 if products:
                     return products
 
-            for search_query in self._build_dummyjson_queries(query, category):
+            for search_query in query_candidates:
                 products = await self._dummyjson_request(
                     client,
                     f"https://dummyjson.com/products/search?q={quote(search_query)}&limit={max_results}",
                 )
                 tried_urls.append(f"search:{search_query}")
+                if products:
+                    return products
+
+            if not use_category_first and slug:
+                products = await self._dummyjson_request(
+                    client,
+                    f"https://dummyjson.com/products/category/{slug}?limit={max_results}",
+                )
+                tried_urls.append(f"category:{slug}")
                 if products:
                     return products
 
@@ -301,9 +392,14 @@ class ProductSearchExecutor(BaseNodeExecutor):
                         return _DUMMYJSON_CATEGORY_MAP[phrase]
         return None
 
-    def _build_dummyjson_queries(self, query: str, category: Optional[str]) -> List[str]:
+    def _build_dummyjson_queries(
+        self,
+        query: str,
+        category: Optional[str],
+        search_terms: Optional[List[str]] = None,
+    ) -> List[str]:
         candidates: List[str] = []
-        for raw in [query, category]:
+        for raw in [*(search_terms or []), query, category]:
             if not raw:
                 continue
             cleaned = raw.strip()

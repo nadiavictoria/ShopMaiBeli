@@ -173,6 +173,33 @@ def test_product_search_builds_broader_dummyjson_queries():
     assert "charger" in queries
 
 
+def test_product_search_builds_queries_from_search_terms():
+    executor = ProductSearchExecutor(make_node("productSearch"), workflow=None)
+    queries = executor._build_dummyjson_queries(
+        "bag",
+        None,
+        search_terms=["office backpack", "laptop backpack"],
+    )
+    assert "office backpack" in queries
+    assert "laptop backpack" in queries
+    assert "backpack" in queries
+
+
+def test_product_search_extracts_query_plan():
+    plan = ProductSearchExecutor._extract_query_plan({
+        "product_type": "backpack",
+        "product_category": "bags",
+        "closest_catalog_category": None,
+        "category_confidence": "low",
+        "search_terms": ["office backpack", "laptop backpack"],
+    })
+    assert plan["product_type"] == "backpack"
+    assert plan["product_category"] == "bags"
+    assert plan["closest_catalog_category"] == ""
+    assert plan["search_terms"] == ["office backpack", "laptop backpack"]
+    assert plan["category_confidence"] == 0.3
+
+
 def test_product_search_local_review_corpus_match():
     executor = ProductSearchExecutor(make_node("productSearch"), workflow=None)
     products = executor._search_local_review_corpus("usb charger multi port", max_results=5)
@@ -213,6 +240,33 @@ async def test_product_search_dummyjson():
     for p in products:
         assert isinstance(p["price"], (int, float))
         assert p["source"] == "dummyjson"
+
+
+@pytest.mark.asyncio
+async def test_product_search_uses_search_terms_from_query_analyzer_output():
+    executor = ProductSearchExecutor(
+        make_node("productSearch", {"source": "mock"}),
+        workflow=None,
+    )
+    output = await executor.execute(
+        make_input({
+            "output": """{
+  "product_type": "earbuds",
+  "product_category": null,
+  "closest_catalog_category": null,
+  "category_confidence": 0.2,
+  "search_terms": ["wireless earbuds", "bluetooth earbuds"],
+  "budget": 80,
+  "priorities": ["wireless"],
+  "preferred_brands": []
+}"""
+        }),
+        make_context(),
+    )
+
+    products = output.first_json.get("products", [])
+    assert products, "Expected products found from search_terms-driven query"
+    assert any("earbuds" in p["name"].lower() or "earbuds" in p["description"].lower() for p in products)
 
 
 # ---------------------------------------------------------------------------
